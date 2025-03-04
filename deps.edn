@@ -1,0 +1,10 @@
+{:paths ["src" "dev"]
+ :deps  {org.scicloj/noj {:mvn/version "2-beta8"}
+         clojure.java-time/clojure.java-time {:mvn/version "1.4.3"}
+         org.nd4j/nd4j-native-platform {:mvn/version "1.0.0-M2.1"}
+         org.deeplearning4j/deeplearning4j-core {:mvn/version "1.0.0-M2.1"}
+         org.deeplearning4j/deeplearning4j-nn {:mvn/version "1.0.0-M2.1"}
+         org.deeplearning4j/deeplearning4j-nlp {:mvn/version "1.0.0-M2.1"}
+         clj-python/libpython-clj {:mvn/version "2.026"}}
+ :aliases
+ {:neil {:project {:name clj-PQs/clj-PQs}}}}
