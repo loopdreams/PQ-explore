@@ -7,7 +7,7 @@
 
 ;; ## Some cleaning/preparation steps on the dataset.
 
-(def datasource "data/20250220_PQs_2021_2025.csv")
+(def datasource "data/20250302_PQs_10K_2024_answers.csv")
 
 
 ;; ### Text Cleaning
@@ -69,7 +69,7 @@
       (tc/map-columns :question [:question] clean-question)
       (tc/map-columns :topic [:topic] clean-topic-label)
       (tc/map-columns :department [:department] normalise-department-name)
-      (tc/select-columns [:date :question :member :department :topic :house])))
+      (tc/select-columns [:date :question :answer :member :department :topic :house])))
 
 (tc/head ds)
 
