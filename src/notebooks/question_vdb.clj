@@ -52,7 +52,7 @@
 
 ;; ## Testing Lookup
 
-;; Next, let's try to use the database to return a similar question.
+;; Next, let's try to use the database to return similar questions from the database.
 
 (def test-question (first questions-list))
 
@@ -78,12 +78,11 @@ test-question
 
 ;; Finally, let's also try with a more focused question
 
-(:topic ds)
-
 (-> ds
     (tc/select-rows #(= (% :topic) "Dublin Bus"))
     :question
-    first)
+    first
+    kind/md)
 
 (def test-question-2 "The Deupty asked the Minister about Dublin Bus Route 74 and what their plans for this route are.")
 
@@ -147,12 +146,12 @@ test-question
 
 ;; They all relate to Education/schools
 
-;; Let's look at the two questions that have greater than 15 similar questions with a 90% threshold
+;; Let's look at the two questions that have greater than 14 similar questions with a 90% threshold
 
-(filter (fn [question] (> (count-similar-questions-above-threshold question 0.9) 15))
+(filter (fn [question] (> (count-similar-questions-above-threshold question 0.9) 14))
         test-questions)
 
-;; Let's try to look at similarity by *topic*
+;; ### Similarity by Topic
 
 ;; We'll look at the top 7 main topics
 
@@ -167,9 +166,12 @@ top-7-topics
 ;; Next, let's try to write a function to count the level of similarity among a topic group.
 ;;
 ;; The idea here is to:
+;;
 ;; 1. Create a mini-store of all the questions related to a topic
+;;
 ;; 2. Check each question against this store, and count it if it has at least 1 (excluding itself) question that is similar to it, based on a threshold
-;; 3. Calculate the percentage of questions that have at least one question similar to them
+;;
+;; 3. Calculate the percentage of questions that have at least one other similar question
 
 (defn percentage-similar-questions [store questions threshold]
   (let [qs-above-threshold
@@ -224,16 +226,16 @@ top-7-topics
 
 ;; We can do a similar kind of comparison with the top seven departments
 
-(def top-5-departments
+(def top-7-departments
   (-> ds
       (tc/group-by [:department])
       (tc/aggregate {:count tc/row-count})
       (tc/order-by :count :desc)
       (tc/select-rows (range 7))))
 
-top-5-departments
+top-7-departments
 
-(let [departments (:department top-5-departments)
+(let [departments (:department top-7-departments)
       data (mapv (fn [department] (let [score (category-similarity department :department 0.9)]
                                     {:department department
                                      :score score}))
@@ -245,7 +247,9 @@ top-5-departments
 
 ;; How about some example questions that aren't similar to other questions?
 
-(defn outlier-questions [topic threshold]
+(defn outlier-questions
+  "Looks for the most similar questions (excluding self) and checks if score is below threshold."
+  [topic threshold]
   (let [target-questions (-> ds (tc/select-rows #(= (:topic %) topic)) :question)]
     (filter (fn [question]
               (let [query (.content (. model embed question))
@@ -259,13 +263,10 @@ top-5-departments
      (str/join "\n\n")
      kind/md)
 
-
-
 (->> 0.77
      (outlier-questions "Health Services")
      (str/join "\n\n")
      kind/md)
-
 
 (->> 0.82
      (outlier-questions "Schools Building Projects")

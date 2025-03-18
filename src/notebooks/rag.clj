@@ -1,3 +1,4 @@
+;; # RAG Test
 (ns notebooks.rag
   (:require [notebooks.question-vdb :refer [query-db-store]]
             [notebooks.preparation :refer [ds]]
@@ -7,6 +8,10 @@
             [clojure.string :as str]
             [jsonista.core :as json]))
 
+;; A short test for demonstrating how to provide a
+;; LLM with context from existing similar questions.
+;;
+;; For this test, I was running an Ollama instance of llama3.1 (8B parameters) locally.
 
 (defn build-context [question]
   (let [similar-questions (map :text (query-db-store question 5))
@@ -17,8 +22,8 @@
 
 (defn make-prompt [question]
   (let [ctx (build-context question)]
-    (str "You are a responsible government official. Provide an informative, short answer to the following question, using the supplied context only. "
-         "Question: " question
+    (str "You are a responsible government official. Provide an informative, short answer to the following question, using the supplied context only."
+         " Question: " question
          " Context: " ctx)))
 
 (defn ask-llm [question]
@@ -42,3 +47,8 @@
 
 (kind/md
  (:content (:message test-response-2)))
+
+(defonce test-response-3 (ask-llm "What measures are the government taking to enhance Ireland's cybersecurity?"))
+
+(kind/md
+ (:content (:message test-response-3)))
