@@ -3,7 +3,8 @@
   (:require [tablecloth.api :as tc]
             [notebooks.preparation :refer [ds]]
             [scicloj.kindly.v4.kind :as kind]
-            [scicloj.tableplot.v1.plotly :as plotly])
+            [scicloj.tableplot.v1.plotly :as plotly]
+            [clojure.string :as str])
   (:import (dev.langchain4j.data.embedding Embedding)
            (dev.langchain4j.data.segment TextSegment)
            (dev.langchain4j.model.embedding EmbeddingModel)
@@ -151,14 +152,122 @@ test-question
 (filter (fn [question] (> (count-similar-questions-above-threshold question 0.9) 15))
         test-questions)
 
-;; Let's narrow the focus to a single area (Education)
+;; Let's try to look at similarity by *topic*
 
-(def sports-funding-questions
+;; We'll look at the top 7 main topics
+
+(def top-7-topics
+  (-> (tc/group-by ds [:topic])
+      (tc/aggregate {:count tc/row-count})
+      (tc/order-by :count [:desc])
+      (tc/select-rows (range 7))))
+
+top-7-topics
+
+;; Next, let's try to write a function to count the level of similarity among a topic group.
+;;
+;; The idea here is to:
+;; 1. Create a mini-store of all the questions related to a topic
+;; 2. Check each question against this store, and count it if it has at least 1 (excluding itself) question that is similar to it, based on a threshold
+;; 3. Calculate the percentage of questions that have at least one question similar to them
+
+(defn percentage-similar-questions [store questions threshold]
+  (let [qs-above-threshold
+        (reduce (fn [res question]
+                  (let [query (.content (. model embed question))
+                        matches (. store findRelevant query 100)]
+                    (conj res
+                          (-> (filter (fn [match] (> (.score match) threshold)) matches)
+                              count
+                              (- 1)))))
+                [] questions)
+        count-qs-above-threshold (count (remove zero? qs-above-threshold))]
+    (float (/ count-qs-above-threshold (count questions)))))
+
+
+(defn category-similarity [name type threshold]
+  (let [target-questions (-> ds (tc/select-rows #(= (type %) name)) :question)
+        topic-store (InMemoryEmbeddingStore/new)
+        add-question (fn [q]
+                       (let [seg (TextSegment/from q)
+                             emb (->> seg (. model embed) (.content))]
+                         (. topic-store add emb seg)))]
+    (do
+     (mapv add-question target-questions)
+     (percentage-similar-questions topic-store target-questions threshold))))
+
+
+(let [topics (:topic top-7-topics)
+      data (mapv (fn [topic] (let [score (category-similarity topic :topic 0.9)]
+                               {:topic topic
+                                :score score}))
+                 topics)]
+  (-> (tc/dataset data)
+      (plotly/layer-bar
+       {:=x :topic
+        :=y :score})))
+
+;; At a lower threshold the topics are highly similar:
+
+(let [topics (:topic top-7-topics)
+      data (mapv (fn [topic] (let [score (category-similarity topic :topic 0.75)]
+                               {:topic topic
+                                :score score}))
+                 topics)]
+  (-> (tc/dataset data)
+      (plotly/layer-bar
+       {:=x :topic
+        :=y :score})))
+
+
+;; Based on the above, of the top 7 topics, the 'Health Services' questions seem the most diverse, which makes sense.
+
+;; We can do a similar kind of comparison with the top seven departments
+
+(def top-5-departments
   (-> ds
-      (tc/select-rows #(= (% :topic) "Sports Funding"))
-      :question))
+      (tc/group-by [:department])
+      (tc/aggregate {:count tc/row-count})
+      (tc/order-by :count :desc)
+      (tc/select-rows (range 7))))
+
+top-5-departments
+
+(let [departments (:department top-5-departments)
+      data (mapv (fn [department] (let [score (category-similarity department :department 0.9)]
+                                    {:department department
+                                     :score score}))
+                 departments)]
+  (-> (tc/dataset data)
+      (plotly/layer-bar
+       {:=x :department
+        :=y :score})))
+
+;; How about some example questions that aren't similar to other questions?
+
+(defn outlier-questions [topic threshold]
+  (let [target-questions (-> ds (tc/select-rows #(= (:topic %) topic)) :question)]
+    (filter (fn [question]
+              (let [query (.content (. model embed question))
+                    match (. db-store findRelevant query 2)]
+                (< (.score (second match)) threshold)))
+            target-questions)))
 
 
-(-> {:n-similar (map #(count-similar-questions-above-threshold % 0.89) sports-funding-questions)}
-    (tc/dataset)
-    (plotly/layer-histogram {:=x :n-similar}))
+(->> 0.80
+     (outlier-questions "Disability Services")
+     (str/join "\n\n")
+     kind/md)
+
+
+
+(->> 0.77
+     (outlier-questions "Health Services")
+     (str/join "\n\n")
+     kind/md)
+
+
+(->> 0.82
+     (outlier-questions "Schools Building Projects")
+     (str/join "\n\n")
+     kind/md)
