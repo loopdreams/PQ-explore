@@ -40,15 +40,15 @@
 
 ;; A short function for adding a question to the store.
 
-(defn add-question-to-store! [question]
+(defn add-question-to-store! [question store]
   (let [segment (TextSegment/from question)
         embedding (->> segment (. model embed) (.content))]
-    (. db-store add embedding segment)))
+    (. store add embedding segment)))
 
 ;; Finally, adding all the questions to the store. The mapping, which has side effects, is wrapped in a 'count' function
 ;; just so we can see at the end how many questions have been added.
 
-(count (map add-question-to-store! questions-list))
+(count (map #(add-question-to-store! % db-store) questions-list))
 
 ;; ## Testing Lookup
 
@@ -235,15 +235,15 @@ top-7-topics
 
 top-7-departments
 
-(let [departments (:department top-7-departments)
-      data (mapv (fn [department] (let [score (category-similarity department :department 0.9)]
-                                    {:department department
-                                     :score score}))
-                 departments)]
-  (-> (tc/dataset data)
-      (plotly/layer-bar
-       {:=x :department
-        :=y :score})))
+;; (let [departments (:department top-7-departments)
+;;       data (mapv (fn [department] (let [score (category-similarity department :department 0.9)]
+;;                                     {:department department
+;;                                      :score score}))
+;;                  departments)]
+;;   (-> (tc/dataset data)
+;;       (plotly/layer-bar
+;;        {:=x :department
+;;         :=y :score})))
 
 ;; How about some example questions that aren't similar to other questions?
 
@@ -272,3 +272,120 @@ top-7-departments
      (outlier-questions "Schools Building Projects")
      (str/join "\n\n")
      kind/md)
+
+
+;; Question Similarity Curves
+
+
+;; (defn category-similarity [name type threshold]
+;;   (let [target-questions (-> ds (tc/select-rows #(= (type %) name)) :question)
+;;         topic-store (InMemoryEmbeddingStore/new)
+;;         add-question (fn [q]
+;;                        (let [seg (TextSegment/from q)
+;;                              emb (->> seg (. model embed) (.content))]
+;;                          (. topic-store add emb seg)))]
+;;     (do
+;;      (mapv add-question target-questions)
+;;      (percentage-similar-questions topic-store target-questions threshold))))
+
+(def db-store-ip (InMemoryEmbeddingStore/new))
+
+(let [ip-questions (:question (tc/select-rows ds #(= (:topic %) "International Protection")))]
+  (count
+   (mapv (fn [q]
+           (let [seg (TextSegment/from q)
+                 emb (->> seg (. model embed) (.content))]
+             (. db-store-ip add emb seg)))
+         ip-questions)))
+
+(def test-question-3 (first (:question (tc/select-rows ds #(= (:topic %) "International Protection")))))
+
+(defn all-similarity-scores [question store & ignore-self?]
+  (let [emb (.content (. model embed question))
+        result (. store findRelevant emb 200)]
+    (map-indexed (fn [idx e] {:idx idx :score (.score e)})
+                 (if ignore-self? (rest result) result))))
+
+(-> (all-similarity-scores test-question-3 db-store-ip true)
+    (tc/dataset)
+    (plotly/layer-line
+     {:=x :idx
+      :=y :score}))
+
+(defn plot-n-random-scores [topic store n]
+  (let [candidates (:question (tc/select-rows ds #(= (:topic %) topic)))
+        selected (take n (repeatedly #(rand-nth candidates)))
+        data (loop [n 0 result []]
+               (if (= n (count selected)) result
+                   (let [q (nth selected n)
+                         scores (all-similarity-scores q store true)
+                         scores (map #(assoc % :question n) scores)]
+                     (recur (inc n) (into result scores)))))]
+    (tc/dataset data)))
+
+(-> (plot-n-random-scores "International Protection" db-store-ip 1)
+    (plotly/base
+     {:=x :idx
+      :=y :score})
+    plotly/layer-point
+    plotly/layer-smooth)
+
+(-> (plot-n-random-scores "International Protection" db-store-ip 20)
+    (plotly/base
+     {:=x :idx
+      :=y :score})
+    plotly/layer-point
+    plotly/layer-smooth)
+
+(-> (plot-n-random-scores "International Protection" db-store-ip 50)
+    (plotly/base
+     {:=x :idx
+      :=y :score})
+    plotly/layer-point
+    plotly/layer-smooth)
+
+(-> (plot-n-random-scores "International Protection" db-store-ip 50)
+    (plotly/layer-histogram
+     {:=x :score}))
+
+(-> (plot-n-random-scores "International Protection" db-store-ip 1)
+    (plotly/layer-histogram
+     {:=x :score}))
+
+;; For comparison, let's try an "International Protection" question
+;; within a different topic area
+
+
+(def db-store-schools (InMemoryEmbeddingStore/new))
+
+(let [schools-questions (:question (tc/select-rows ds #(= (:topic %) "Schools Building Projects")))]
+  (count
+   (mapv (fn [q]
+           (let [seg (TextSegment/from q)
+                 emb (->> seg (. model embed) (.content))]
+             (. db-store-schools add emb seg)))
+         schools-questions)))
+
+(def random-ip-question (rand-nth (:question (tc/select-rows ds #(= (:topic %) "International Protection")))))
+
+(def scores-self-group-other-group
+  (let [scores-ip (all-similarity-scores random-ip-question db-store-ip true)
+        scores-ip (map (fn [s] (assoc s :batch "same-group")) scores-ip)
+        scores-sch (all-similarity-scores random-ip-question db-store-schools)
+        scores-sch (map (fn [s] (assoc s :batch "other-group")) scores-sch)]
+    (-> (concat scores-ip scores-sch)
+        (tc/dataset))))
+
+(-> scores-self-group-other-group
+    (plotly/base
+     {:=x :idx
+      :=y :score
+      :=color :batch})
+    (plotly/layer-point)
+    (plotly/layer-smooth))
+
+(-> scores-self-group-other-group
+    (plotly/layer-histogram
+     {:=x :score
+      :=color :batch
+      :=mark-opacity 0.7}))
