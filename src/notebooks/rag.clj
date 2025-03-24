@@ -5,6 +5,7 @@
             [clj-http.client :as client]
             [scicloj.kindly.v4.kind :as kind]
             [tablecloth.api :as tc]
+            [scicloj.tableplot.v1.plotly :as plotly]
             [clojure.string :as str]
             [jsonista.core :as json])
   (:import (dev.langchain4j.data.embedding Embedding)
@@ -26,40 +27,57 @@
                              :answer)]
     (str/join "\n" previous-answers)))
 
-(defn make-prompt [question]
+(defn make-context-prompt [question]
   (let [ctx (build-context question)]
-    (str "You are a responsible government official. Provide an informative, short answer to the following question, using the supplied context only."
-         " Question: " question
+    (str "You are a responsible government official. Provide an informative, short answer to the user's question, using the supplied context only."
          " Context: " ctx)))
 
-(defn ask-llm [question model]
-  (let [prompt (make-prompt question)]
+(defn ask-llm-local [question model]
+  (let [prompt (make-context-prompt question)]
     (-> (client/post "http://localhost:11434/api/chat"
                      {:form-params
                       {:model model
-                       :messages [{:role "user" :content prompt}]
+                       :messages [{:role "system" :content prompt}
+                                  {:role "user" :content question}]
                        :stream false}
                       :content-type :json})
         :body
         (json/read-value json/keyword-keys-object-mapper))))
 
+(def local-llm-models
+  [{:name "Llama3.1" :parameters "8B" :model-ref "llama3.1"}
+   {:name "Llama3.1" :parameters "3B" :model-ref "llama3.2"}
+   {:name "Mistral" :parameters "7B" :model-ref "mistral"}
+   {:name "LLaVa" :parameters "7B" :model-ref "llava"}
+   {:name "Deepseek R1" :parameters "7B" :model-ref "deepseek-r1"}
+   {:name "Gemma 3" :parameters "1B" :model-ref "gemma3:1b"}
+   {:name "Gemma 3" :parameters "4B" :model-ref "gemma3"}
+   {:name "Granite 3.2" :parameters "8B" :model-ref "granite3.2"}])
 
-(defonce test-response (ask-llm "what is the government doing about about climate change?"  "llama3.1"))
+(kind/table (sort-by :name local-llm-models))
 
-(kind/md
- (:content (:message test-response)))
+(defn unix-timestamp []
+  (str (quot (System/currentTimeMillis) 1000)))
 
-(defonce test-response-2 (ask-llm "What are the government's plans for legislation?"  "llama3.1"))
+(defn run-models-and-write-answers-to-disk! [models question]
+  (spit (str "data/" (unix-timestamp) "-model_responses.edn")
+        (reduce (fn [res {:keys [model-ref] :as model}]
+                  (let [answer (-> (ask-llm-local question model-ref)
+                                   :message
+                                   :content)]
+                    (conj res
+                          (assoc model :response answer))))
+                []
+                models)))
 
-(kind/md
- (:content (:message test-response-2)))
+(comment
+  (time
+   (run-models-and-write-answers-to-disk!
+    (take 2 local-llm-models)
+    "Deputy Emer Currie asked the Minister for Transport his plans to expand EV charging points at the State's airports to facilitate more EV drivers and an increase in EV car rental; and if he will make a statement on the matter.")))
 
-(defonce test-response-3 (ask-llm "What measures are the government taking to enhance Ireland's cybersecurity?"  "llama3.1"))
 
-(kind/md
- (:content (:message test-response-3)))
-
-;; ## Quick test of answers
+(defonce model-responses (clojure.edn/read-string (slurp "data/1742847936-model_responses.edn")))
 
 (def db-store-answers (InMemoryEmbeddingStore/new))
 
@@ -69,6 +87,64 @@
       :answer))
 
 (count (map #(q/add-question-to-store! (str %) db-store-answers) answers-list))
+
+
+(defn add-similarity-scores [model-data store]
+  (let [query  (.content (. q/model embed (:response model-data)))
+        result (. store findRelevant query 10)
+        scores (mapv #(.score %) result)
+        max    (first scores)
+        min    (last scores)
+        avg    (float (/ (apply + scores) (count scores)))]
+    (-> model-data
+        (assoc :max max)
+        (assoc :min min)
+        (assoc :avg avg))))
+
+(def model-scores
+  (mapv #(add-similarity-scores % db-store-answers) model-responses))
+
+(kind/table
+ (-> (tc/dataset model-scores)
+     (tc/select-columns [:model-ref :parameters :response])))
+
+(defn plot-model-scores [model-data]
+  (-> (tc/dataset model-data)
+      (plotly/base
+       {:=x :model-ref})
+      (plotly/layer-bar
+       {:=y :min})
+      (plotly/layer-bar
+       {:=y :avg})
+      (plotly/layer-bar
+       {:=y :max})))
+
+(plot-model-scores model-scores)
+
+
+
+
+
+
+
+
+(defonce test-response (ask-llm-local "what is the government doing about about climate change?"  "llama3.1"))
+
+(kind/md
+ (:content (:message test-response)))
+
+(defonce test-response-2 (ask-llm-local "What are the government's plans for legislation?"  "llama3.1"))
+
+(kind/md
+ (:content (:message test-response-2)))
+
+(defonce test-response-3 (ask-llm-local "What measures are the government taking to enhance Ireland's cybersecurity?"  "llama3.1"))
+
+(kind/md
+ (:content (:message test-response-3)))
+
+
+;; ## Quick test of answers
 
 
 ;; A rough metric for similarity:
@@ -112,10 +188,11 @@
 
 (defn get-score-color [score]
   (condp > score
-    0.5 "#F195A9"
-    0.7 "#EAD196"
-    0.8 "#E1EACD"
-    "#BAD8B6"))
+    0.5 "#F195A9" ;; red
+    0.7 "#EAD196" ;; yellow
+    0.8 "#E1EACD" ;; light green
+    "#BAD8B6"))     ;; dark green
+
 
 
 ;; TODO: preserve formatting (newlines, bullets, etc)
@@ -169,7 +246,7 @@
 ;; Let's try some responses from a 1B parameter model (gemma 3)
 
 
-(defonce test-response-6 (ask-llm "what is the government doing about about climate change?" "gemma3:1b"))
+(defonce test-response-6 (ask-llm-local "what is the government doing about about climate change?" "gemma3:1b"))
 (defonce test-response-7 (ask-llm-no-context "what is the Irish government doing about about climate change?" "gemma3:1b"))
 
 (kind/md
@@ -186,3 +263,8 @@
 
 (kind/hiccup
  (color-response-score (response-sentence-scores test-response-7)))
+
+;; Tasks:
+;; TODO: Test Various Models
+;; TODO: Ask another model to evaluate answer
+;; TODO: Set context properly
