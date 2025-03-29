@@ -4,13 +4,20 @@
             [notebooks.preparation :refer [ds]]
             [scicloj.kindly.v4.kind :as kind]
             [scicloj.tableplot.v1.plotly :as plotly]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [jsonista.core :as json]
+            [scicloj.metamorph.ml :as ml]
+            [scicloj.metamorph.core :as mm]
+            [libpython-clj2.python :refer [py.]]
+            [libpython-clj2.require :refer [require-python]])
   (:import (dev.langchain4j.data.embedding Embedding)
            (dev.langchain4j.data.segment TextSegment)
            (dev.langchain4j.model.embedding EmbeddingModel)
            (dev.langchain4j.store.embedding EmbeddingMatch)
            (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
-           (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
+           (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)
+           (smile.manifold TSNE)
+           (smile.feature.extraction PCA)))
 
 ;; ## Introduction [Intro text]
 
@@ -36,7 +43,10 @@
 ;; by langchain4j. There are also options for using a more robust solution like postgres, but
 ;; for testing/exploration purposes, an in-memory database will do.
 
-(def db-store (InMemoryEmbeddingStore/new))
+
+;; TODO: These are stored as file to avoid always loading them. For final version uncomment these.
+(comment
+  (def db-store (InMemoryEmbeddingStore/new)))
 
 ;; A short function for adding a question to the store.
 
@@ -48,7 +58,13 @@
 ;; Finally, adding all the questions to the store. The mapping, which has side effects, is wrapped in a 'count' function
 ;; just so we can see at the end how many questions have been added.
 
-(count (map #(add-question-to-store! % db-store) questions-list))
+(comment
+  (count (map #(add-question-to-store! % db-store) questions-list)))
+
+(comment
+  (spit "data/db-store-questions.json" (.serializeToJson db-store)))
+
+(def db-store (InMemoryEmbeddingStore/fromFile "data/db-store-questions.json"))
 
 ;; ## Testing Lookup
 
@@ -118,38 +134,6 @@ test-question
 
 (def test-questions (take 100 questions-list))
 
-
-(defn count-similar-questions-above-threshold [question threshold]
-  (let [candidates (query-db-store question 10000)
-        relevant (filter (fn [{:keys [score]}] (> score threshold)) candidates)]
-    (- (count relevant) 1)))
-
-(-> {:n-similar (map #(count-similar-questions-above-threshold % 0.9) test-questions)}
-    (tc/dataset)
-    (plotly/layer-histogram {:=x :n-similar}))
-
-
-(-> {:n-similar (map #(count-similar-questions-above-threshold % 0.85) test-questions)}
-    (tc/dataset)
-    (plotly/layer-histogram {:=x :n-similar}))
-
-(-> {:n-similar (map #(count-similar-questions-above-threshold % 0.75) test-questions)}
-    (tc/dataset)
-    (plotly/layer-histogram {:=x :n-similar}))
-
-;; At a threshold of 0.75, 6 of the sample questions have more than 600 other similar questions
-;;
-;; Let's look at these questions
-
-(filter (fn [question] (> (count-similar-questions-above-threshold question 0.75) 600))
-        test-questions)
-
-;; They all relate to Education/schools
-
-;; Let's look at the two questions that have greater than 14 similar questions with a 90% threshold
-
-(filter (fn [question] (> (count-similar-questions-above-threshold question 0.9) 14))
-        test-questions)
 
 ;; ### Similarity by Topic
 
@@ -388,4 +372,351 @@ top-7-departments
     (plotly/layer-histogram
      {:=x :score
       :=color :batch
+      :=mark-opacity 0.7}))
+
+;; ## Visualising with tSNE
+
+(def test-data {:a [0.1 0.4 0.2] :b [0.3 0.9 0.8]})
+
+(def test-data-doubles
+  (-> test-data
+      (tc/dataset)
+      (tc/rows :as-double-arrays)))
+
+(def tsne (TSNE. test-data-doubles 2 20 200 100))
+
+(->
+ (. tsne coordinates)
+ (tc/dataset))
+
+
+(plotly/layer-point (-> (. tsne coordinates)
+                        (tc/dataset))
+  {:=x 0
+   :=y 1})
+
+(defn smile-minst->arr [str]
+  (let [lines (str/split-lines str)]
+    (reduce (fn [res line]
+              (conj res
+                    (let [str-nums (str/split line #"\ ")]
+                      (mapv parse-double str-nums))))
+            []
+            lines)))
+
+(defonce smile-mnist (smile-minst->arr (slurp "https://raw.githubusercontent.com/haifengl/smile/refs/heads/master/shell/src/universal/data/mnist/mnist2500_X.txt")))
+(defonce mnist-labels (str/split-lines (slurp "https://raw.githubusercontent.com/haifengl/smile/refs/heads/master/shell/src/universal/data/mnist/mnist2500_labels.txt")))
+
+
+
+(def tsne-2 (TSNE. (-> smile-mnist tc/dataset (tc/rows :as-double-arrays)) 2 5 200 1000))
+
+(plotly/layer-point (-> (. tsne-2 coordinates)
+                        (tc/dataset)
+                        (tc/add-column :label mnist-labels))
+ {:=width 800
+  :=x 0
+  :=y 1
+  :=color :label})
+
+(def vecs
+  (->> (json/read-value (.serializeToJson db-store)
+                        json/keyword-keys-object-mapper)
+       :entries
+       (mapv (fn [e] (:vector (:embedding e))))
+       (tc/dataset)))
+
+
+(def tsne-3 (TSNE. (-> vecs
+                       (tc/select-rows (range 1000))
+                       (tc/rows :as-double-arrays)) 2 2 200 1000))
+
+(plotly/layer-point
+ (-> (. tsne-3 coordinates)
+     (tc/dataset)
+     (tc/add-column :label (take 1000 (-> ds :topic))))
+ {:=x 0
+  :=y 1
+  :=color :label
+  :=height 600
+  :=width 600})
+
+
+(def ds-schools-immigration
+  (-> ds
+      (tc/select-rows #(some #{(:topic %)} ["Schools Building Projects" "International Protection"]))
+      (tc/select-columns [:question :topic])
+      (tc/map-columns :embedding [:question] (fn [q]
+                                               (->> (TextSegment/from q)
+                                                    (. model embed)
+                                                    (.content)
+                                                    (.vector)
+                                                    vec)))))
+
+(def tsne-4
+  (TSNE.
+   (-> (into [] (:embedding ds-schools-immigration))
+       (tc/dataset)
+       (tc/rows :as-double-arrays))
+   2 25 200 1000))
+
+
+(plotly/layer-point
+ (-> (. tsne-4 coordinates)
+     (tc/dataset)
+     (tc/add-column :label (:topic ds-schools-immigration)))
+ {:=x 0
+  :=y 1
+  :=color :label
+  :=height 600
+  :=width 600})
+
+
+;; Filtering for topics that have more than 20 questions associated
+(def dep-justice-target-topics
+  (-> ds
+      (tc/select-rows #(= (:department %) "Justice"))
+      (tc/group-by [:topic])
+      (tc/aggregate {:n-questions tc/row-count})
+      (tc/select-rows #(> (:n-questions %) 20))
+      :topic))
+
+
+(def ds-department-justice
+  (-> ds
+      (tc/select-rows #(= (:department %) "Justice"))
+      (tc/select-rows #(some #{(:topic %)} dep-justice-target-topics))
+      (tc/select-columns [:question :topic])
+      (tc/map-columns :embedding [:question] (fn [q]
+                                               (->> (TextSegment/from q)
+                                                    (. model embed)
+                                                    (.content)
+                                                    (.vector)
+                                                    vec)))))
+
+
+(def tsne-dep-justice
+  (TSNE.
+   (-> (into [] (:embedding ds-department-justice))
+       (tc/dataset)
+       (tc/rows :as-double-arrays))
+   2 20 200 1000))
+
+
+(plotly/layer-point
+ (-> (. tsne-dep-justice coordinates)
+     (tc/dataset)
+     (tc/add-column :label (:topic ds-department-justice)))
+ {:=x 0
+  :=y 1
+  :=color :label
+  :=height 600
+  :=width 600})
+
+
+(def dep-children-target-topics
+  (-> ds
+      (tc/select-rows #(= (:department %) "Children"))
+      (tc/group-by [:topic])
+      (tc/aggregate {:n-questions tc/row-count})
+      (tc/select-rows #(> (:n-questions %) 20))
+      :topic))
+
+
+(def ds-department-children
+  (-> ds
+      (tc/select-rows #(= (:department %) "Children"))
+      (tc/select-rows #(some #{(:topic %)} dep-children-target-topics))
+      (tc/select-columns [:question :topic])
+      (tc/map-columns :embedding [:question] (fn [q]
+                                               (->> (TextSegment/from q)
+                                                    (. model embed)
+                                                    (.content)
+                                                    (.vector)
+                                                    vec)))))
+
+
+(def tsne-dep-children
+  (TSNE.
+   (-> (into [] (:embedding ds-department-children))
+       (tc/dataset)
+       (tc/rows :as-double-arrays))
+   2 20 200 1000))
+
+(-> (. tsne-dep-children coordinates)
+    (tc/dataset)
+    (tc/add-column :label (:topic ds-department-children))
+    (plotly/base
+     {:=width 800
+      :=height 600})
+    (plotly/layer-point
+     {:=x 0
+      :=y 1
+      :=color :label}))
+
+
+(kind/vega
+ {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
+  :data {:values
+         (-> (. tsne-dep-justice coordinates)
+             (tc/dataset)
+             (tc/add-column :label (:topic ds-department-justice))
+             (tc/rename-columns {0 :x 1 :y})
+             (tc/rows :as-maps))}
+  :width 600
+  :height 600
+  :mark {:type :point :filled true :size 100}
+  :encoding {:x {:field :x
+                 :type :quantitative}
+             :y {:field :y
+                 :type :quantitative}
+             :color {:field :label
+                     :type :nominal}}})
+
+(kind/vega
+ {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
+  :data {:values
+         (-> (. tsne-dep-children coordinates)
+             (tc/dataset)
+             (tc/add-column :label (:topic ds-department-children))
+             (tc/add-column :question (:question ds-department-children))
+             (tc/rename-columns {0 :x 1 :y})
+             (tc/rows :as-maps))}
+  :width 600
+  :height 600
+  :mark {:type :point :filled true :size 100}
+  :encoding {:x {:field :x
+                 :type :quantitative}
+             :y {:field :y
+                 :type :quantitative}
+             :color {:field :label
+                     :type :nominal}
+             :tooltip {:field :question
+                       :type :nominal}}})
+
+(kind/vega-lite
+ {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
+  :data {:values
+         (-> (. tsne-4 coordinates)
+             (tc/dataset)
+             (tc/add-column :label (:topic ds-schools-immigration))
+             (tc/rename-columns {0 :x 1 :y})
+             (tc/rows :as-maps))}
+  :width 600
+  :height 600
+  :mark :point
+  :encoding {:x {:field :x
+                 :type :quantitative}
+             :y {:field :y
+                 :type :quantitative}
+             :color {:field :label
+                     :type :nominal}}})
+
+
+;; Visualise a question and the selected matching questions (neighbours)
+
+(def questions-subset
+  (->
+   (take 1000 (repeatedly #(rand-nth questions-list)))
+   distinct))
+
+(count questions-subset)
+
+
+(def sample-question "How much has Enterprise Ireland spent on supporting Irish businesses in recent years?")
+
+(def questions-subset-store (InMemoryEmbeddingStore/new))
+
+(count (map #(add-question-to-store! % questions-subset-store) questions-subset))
+
+(def matching-questions
+  (let [query (.content (. model embed sample-question))
+        matches (. questions-subset-store findRelevant query 5)]
+    (map (fn [entry] {:question (.text (.embedded entry))
+                      :similarity (.score entry)})
+         matches)))
+
+(def ds-subset
+  (-> ds
+      (tc/select-columns :question)
+      (tc/select-rows #(some #{(:question %)} questions-subset))))
+
+
+(def ds-subset-labelled
+  (->> (tc/rows ds-subset :as-maps)
+       (map (fn [entry]
+              (let [match (filterv (fn [{:keys [question]}]
+                                     (= question (:question entry)))
+                                   matching-questions)]
+                (if (seq match)
+                  (-> entry
+                      (assoc :label "match")
+                      (assoc :similarity (:similarity (first match))))
+                  (-> entry
+                      (assoc :label "default")
+                      (assoc :similarity 0))))))
+       (into [{:question sample-question
+               :label "question"
+               :similarity 0}])
+       (tc/dataset)))
+
+(def ds-subset-labelled-embeddings
+  (tc/map-columns ds-subset-labelled
+                  :embedding [:question]
+                  (fn [q]
+                    (->> (TextSegment/from q)
+                         (. model embed)
+                         (.content)
+                         (.vector)
+                         vec))))
+
+(def tsne-question-asked
+  (TSNE.
+   (-> (into [] (:embedding ds-subset-labelled-embeddings))
+       (tc/dataset)
+       (tc/rows :as-double-arrays))
+   2 20 200 2000))
+
+
+(kind/vega
+ {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
+  :data {:values
+         (-> (. tsne-question-asked coordinates)
+             (tc/dataset)
+             (tc/add-column :label (:label ds-subset-labelled))
+             (tc/add-column :question (:question ds-subset-labelled))
+             (tc/add-column :similarity (:similarity ds-subset-labelled))
+             (tc/rename-columns {0 :x 1 :y})
+             (tc/rows :as-maps))}
+  :width 600
+  :height 600
+  :mark {:type :point :filled true :size 100}
+  :encoding {:x {:field :x
+                 :type :quantitative}
+             :y {:field :y
+                 :type :quantitative}
+             :color {:field :label
+                     :type :nominal}
+             :tooltip {:field :similarity
+                       :type :quantitative}}})
+
+
+(def tsne-question-asked-3d
+  (TSNE.
+   (-> (into [] (:embedding ds-subset-labelled-embeddings))
+       (tc/dataset)
+       (tc/rows :as-double-arrays))
+   3 20 200 2000))
+
+(-> (. tsne-question-asked-3d coordinates)
+    (tc/dataset)
+    (tc/add-column :label (:label ds-subset-labelled))
+    (plotly/base
+     {:=width 800
+      :=coordinates :3d})
+    (plotly/layer-point
+     {:=x 0
+      :=y 1
+      :=z 2
+      :=color :label
       :=mark-opacity 0.7}))
