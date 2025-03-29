@@ -5,10 +5,11 @@
   {:format [:quarto :html]
    :book {:title "PQ Notebook"}
    :base-target-path "book"
-   :base-source-path "src/notebooks"
-   :source-path ["preparation.clj"
-                 "question_vdb.clj"
-                 "rag.clj"]
+   :base-source-path "src"
+   :source-path ["index.clj"
+                 "notebooks/preparation.clj"
+                 "notebooks/question_vdb.clj"
+                 "notebooks/rag.clj"]
    :clean-up-target-dir true})
 
 (defn make-book [_] (clay/make! book-spec))
