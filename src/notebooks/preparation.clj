@@ -1,7 +1,9 @@
 ;; # Dataset Preparation
 (ns notebooks.preparation
   (:require [tablecloth.api :as tc]
-            [clojure.string :as str]))
+            [java-time.api :as jt]
+            [clojure.string :as str]
+            [scicloj.kindly.v4.kind :as kind]))
 
 
 
@@ -60,6 +62,24 @@
     (re-find #"^Minister for" label) (first (re-find #"(?<=^Minister for )(\w+)(?=,| |$)" label))
     :else label))
 
+;; ## Duplicate questions
+
+;; There are some questions that are duplicates. For example:
+
+(kind/table
+ (->> (tc/map-columns (tc/dataset datasource {:key-fn keyword}) :question [:question] clean-question)
+      :question
+      (frequencies)
+      (sort-by second)
+      reverse
+      (take 2)))
+
+;; You can see from these that the issue is because there are separate details supplied that are not available here.
+;;
+;; For the purposes of this exercise, it is better to remove these duplicates entirely, and we will do so below
+;; using tablecloths unique-by function
+
+
 
 ;; ## Build Prepared Dataset
 
@@ -69,8 +89,51 @@
       (tc/map-columns :question [:question] clean-question)
       (tc/map-columns :topic [:topic] clean-topic-label)
       (tc/map-columns :department [:department] normalise-department-name)
+      (tc/unique-by :question)
       (tc/select-columns [:date :question :answer :member :department :topic :house])))
 
 (tc/head ds)
 
 (tc/tail ds)
+
+
+;; ## General Stats
+
+^:kindly/hide-code
+(def total-questions (tc/row-count ds))
+
+^:kindly/hide-code
+(def number-deputies (-> ds :member distinct count))
+
+^:kindly/hide-code
+(def ds-date-start (-> ds (tc/order-by :date) :date first))
+
+^:kindly/hide-code
+(def ds-date-end (-> ds (tc/order-by :date :desc) :date first))
+
+^:kindly/hide-code
+(def number-topics (-> ds :topic distinct count))
+
+^:kindly/hide-code
+(def top-5-topics (take 5 (-> ds (tc/group-by [:topic])
+                              (tc/aggregate {:count tc/row-count})
+                              (tc/order-by :count :desc)
+                              :topic)))
+
+^:kindly/hide-code
+(def top-5-most-asked-departments (take 5 (-> ds (tc/group-by [:department])
+                                              (tc/aggregate {:count tc/row-count})
+                                              (tc/order-by :count :desc)
+                                              :department)))
+
+
+^:kindly/hide-code
+(kind/hiccup
+ [:div
+  [:ul
+   [:li "Dates range from "
+    [:strong (jt/format "MMMM dd yyyy" ds-date-start)] " to "
+    [:strong (jt/format "MMMM dd yyyy" ds-date-end)]]
+   [:li [:strong (format "%,d" total-questions)] " total questions asked by " [:strong number-deputies] " members of parliament"]
+   [:li "The five most common question topics are: " (str/join ", " top-5-topics)]
+   [:li "The five most commonnly asked departments are: " (str/join ", " top-5-most-asked-departments)]]])
