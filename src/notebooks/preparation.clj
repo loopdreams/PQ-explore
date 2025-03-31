@@ -11,7 +11,6 @@
 
 (def datasource "data/20250302_PQs_10K_2024_answers.csv")
 
-
 ;; ### Text Cleaning
 ;;
 ;; #### Question Formatting
@@ -62,7 +61,16 @@
     (re-find #"^Minister for" label) (first (re-find #"(?<=^Minister for )(\w+)(?=,| |$)" label))
     :else label))
 
-;; ## Duplicate questions
+;; #### Answer Cleaning
+;; The data for the question 'answers' was in xml format, and occasionally
+;; included things like table elements. While parsing these I ommotted them and
+;; left the string '{{OMMITTED ...}}' in their place. So, I will also add a step
+;; here to remove those parts of the string.
+
+(defn clean-incomplete-answers [answer]
+  (str/replace answer #"\{\{OMITTED.*element\}\}" ""))
+
+;; ### Duplicate questions
 
 ;; There are some questions that are duplicates. For example:
 
@@ -77,7 +85,8 @@
 ;; You can see from these that the issue is because there are separate details supplied that are not available here.
 ;;
 ;; For the purposes of this exercise, it is better to remove these duplicates entirely, and we will do so below
-;; using tablecloths unique-by function
+;; using tablecloth's unique-by function.
+
 
 
 
@@ -89,13 +98,10 @@
       (tc/map-columns :question [:question] clean-question)
       (tc/map-columns :topic [:topic] clean-topic-label)
       (tc/map-columns :department [:department] normalise-department-name)
+      (tc/drop-missing :answer)
+      (tc/map-columns :answer [:answer] clean-incomplete-answers)
       (tc/unique-by :question)
-      (tc/select-columns [:date :question :answer :member :department :topic :house])))
-
-(tc/head ds)
-
-(tc/tail ds)
-
+      (tc/select-columns [:date :question :answer :member :department :topic])))
 
 ;; ## General Stats
 
@@ -137,3 +143,9 @@
    [:li [:strong (format "%,d" total-questions)] " total questions asked by " [:strong number-deputies] " members of parliament"]
    [:li "The five most common question topics are: " (str/join ", " top-5-topics)]
    [:li "The five most commonnly asked departments are: " (str/join ", " top-5-most-asked-departments)]]])
+
+
+;; ## A look at the dataset
+(tc/info ds)
+
+(tc/head ds)
