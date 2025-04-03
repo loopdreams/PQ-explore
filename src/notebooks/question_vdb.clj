@@ -4,12 +4,7 @@
             [notebooks.preparation :refer [ds]]
             [scicloj.kindly.v4.kind :as kind]
             [scicloj.tableplot.v1.plotly :as plotly]
-            [clojure.string :as str]
-            [jsonista.core :as json]
-            [scicloj.metamorph.ml :as ml]
-            [scicloj.metamorph.core :as mm]
-            [libpython-clj2.python :refer [py.]]
-            [libpython-clj2.require :refer [require-python]])
+            [jsonista.core :as json])
   (:import (dev.langchain4j.data.embedding Embedding)
            (dev.langchain4j.data.segment TextSegment)
            (dev.langchain4j.model.embedding EmbeddingModel)
@@ -19,96 +14,130 @@
            (smile.manifold TSNE)
            (smile.feature.extraction PCA)))
 
-;; ## Introduction [Intro text]
+;; ## Introduction
+;;
+;; In this section we will go through:
+;;
+;; 1. Building an in-memory vector database using langchain4j
+;;
+;; 2. Explore visualisations of this database to build up an intuition about how the data is related
 
 
 ;; ## Building a Vector Database from the Questions
 
-;; We will first use langchain4j to transform question text into vector embeddings. The model
-;; we will use is provided by langchain4j.
-
-(def model (AllMiniLmL6V2EmbeddingModel/new))
+;; ### Vector Embeddings
+;; First, let's separate out all of the questions from the original dataset, and
+;; store these under the name 'questions-list'. We will also take a peek at the
+;; first question as a reminder of the type of data we will be storing.
 
 (def questions-list (:question ds))
 
-;; Let's look at a single embedding for reference.
+(kind/pprint (first questions-list))
 
-(->> (TextSegment/from (first questions-list))
-     (. model embed)
-     (.content))
+;; Next, let's see what an vector embedding of this single question looks like.
+;; To do this, we have to first define a model that will perform the translation
+;; of the text into a vector of numbers. We will use langchain4j's embedding
+;; model for this.
 
-;; As you can see, it is a very long vector of floating points representing the text.
-;;
+(def embedding-model (AllMiniLmL6V2EmbeddingModel/new))
+
+(def sample-question-embedding
+  (->> (TextSegment/from (first questions-list))
+       (. embedding-model embed)))
+
+
+(kind/pprint (-> sample-question-embedding
+                 .content
+                 .vector))
+
+;; We can see it is just an array of floating point numbers. Let's see how large
+;; the vector embedding is:
+
+(-> sample-question-embedding
+    .content
+    .vector
+    count)
+
 ;; In order to store the embeddings in a database, we will use an in-memory database provided
 ;; by langchain4j. There are also options for using a more robust solution like postgres, but
 ;; for testing/exploration purposes, an in-memory database will do.
 
-
-;; TODO: These are stored as file to avoid always loading them. For final version uncomment these.
-(comment
-  (def db-store (InMemoryEmbeddingStore/new)))
-
-;; A short function for adding a question to the store.
+;; We will first define a short function for adding a question to a memory store:
 
 (defn add-question-to-store! [question store]
   (let [segment (TextSegment/from question)
-        embedding (->> segment (. model embed) (.content))]
+        embedding (->> segment (. embedding-model embed) (.content))]
     (. store add embedding segment)))
 
-;; Finally, adding all the questions to the store. The mapping, which has side effects, is wrapped in a 'count' function
-;; just so we can see at the end how many questions have been added.
+;; At this stage, we would define a new store and add the questions. The
+;; in-memory database store function provided by langchain4j also contains an
+;; option to convert the data to json. For performance/convenience reasons, I have
+;; already pre-made that json file and the 'db-store' variable below simply reads
+;; from that file to load the database into memory. I have left the code used to
+;; generate the json file in as a comment for reference. You can evaluate the
+;; code within this comment if you want to re-build the database.
 
 (comment
-  (count (map #(add-question-to-store! % db-store) questions-list)))
-
-(comment
-  (spit "data/db-store-questions.json" (.serializeToJson db-store)))
+  (let [db-store (InMemoryEmbeddingStore/new)
+        entries-added (count (map #(add-question-to-store! % db-store) questions-list))]
+    (do
+      (spit "data/db-store-questions.json" (.serializeToJson db-store))
+      (println (str entries-added " records serialised to a json file at data/db-store-questions.json")))))
 
 (def db-store (InMemoryEmbeddingStore/fromFile "data/db-store-questions.json"))
 
-;; ## Testing Lookup
 
-;; Next, let's try to use the database to return similar questions from the database.
+;; ### Testing Question Lookup
 
-(def test-question (first questions-list))
-
-test-question
-
-;; It's a very generic question...
+;; This function takes in some 'text' as a query, and returns 'n' number of
+;; similar questions, along with their similarity score.
 
 (defn query-db-store [text n]
-  (let [query (.content (. model embed text))
+  (let [query (.content (. embedding-model embed text))
         result (. db-store findRelevant query n)]
     (map (fn [entry]
            {:text (.text (.embedded entry))
             :score (.score entry)})
          result)))
 
+;; As a test question, I'll take an actual question that was asked at a point in
+;; time later than that captured by the dataset. It's a question about electric
+;; vehicle charging points at airports.
+
+(def test-question-1 "Deputy Emer Currie asked the Minister for Transport his plans to expand EV charging points at the State's airports to facilitate more EV drivers and an increase in EV car rental; and if he will make a statement on the matter.")
+
+(kind/md test-question-1)
+
+;; Now, let's see what questions are similar.
+
 (kind/table
- (query-db-store test-question 5))
+ (query-db-store test-question-1 5))
 
-;; Let's try with a made-up question
+;; As we can see, there appear to be no pre-existing questions within the
+;; timeframe of the dataset that relate specifically to EV charging at
+;; *airports*. However, we were able to retrieve questions that generally
+;; related to EV charging.
 
-(kind/table
- (query-db-store "The Deputy would like to ask the Minister about schemes relating to climate change." 5))
-
-;; Finally, let's also try with a more focused question
+;; Let's try with a question that is similar to something already in the database.
 
 (-> ds
-    (tc/select-rows #(= (% :topic) "Dublin Bus"))
+    (tc/select-rows #(= (% :topic) "Passport Services"))
     :question
-    first
-    kind/md)
+    (nth 10)
+    (kind/md))
 
-(def test-question-2 "The Deupty asked the Minister about Dublin Bus Route 74 and what their plans for this route are.")
+
+(def test-question-2 "The Deputy asked the Minister for Foreign Affairs if he can put in place an effective process for applications for passport renewals or new passport applications")
 
 (kind/table
  (query-db-store test-question-2 5))
 
-;; Two of the five questions relate to the national bus service (Bus Eireann) as opposed to Dublin Bus, but overall
-;; it is quite close.
+;; We can see that we do indeed return the matching question, along with other
+;; questions relating to individuals who are experiencing delay's with their
+;; passport applications.
 
-;; ## Answering a Question
+
+;; ### Answering a Question
 ;;
 ;; Let's finally use this method to return the best answers based on the question given. This
 ;; approach could be later used to provide context for a RAG model that would generate answers.
@@ -119,184 +148,84 @@ test-question
         (tc/select-rows #(some #{(% :question)} matching-questions))
         (tc/select-columns [:answer :date]))))
 
-(kind/table
- (get-answers-for-question test-question-2))
+;; As we can see in the table below, we also capture the date the question was
+;; answered, and this could be useful in the context of a RAG model when we
+;; might perhaps want to return a less similar, but more recent answer.
+
+(get-answers-for-question test-question-2)
 
 
-;; Using just chatgpt, here is how a sample answer might possibly be generated:
+;; ## Visualising Question Similarity
 ;;
-;; > The Minister stated that while he is responsible for public transport policy and funding, the day-to-day operations, including Dublin Bus Route 74, fall under the National Transport Authority (NTA). He has therefore referred the Deputy’s question to the NTA for a direct reply.
+;; Now that we have a database that can be used to retrieve similar questions,
+;; let's look at a few ways that we can better understand how this process is
+;; working.
 
-;; ## Question Similarity Across the Database
+;; ### Question Similarity Curves
+
+;; For this section, we are going to compare a question against all other
+;; questions in the same group. The sample 'groups' we will use are based on
+;; three of the most common topics in the dataset:
 ;;
-;; For this exploration, we will take the first 100 questions, and count how
-;; many questions are in the database based on similarity
-
-(def test-questions (take 100 questions-list))
-
-
-;; ### Similarity by Topic
-
-;; We'll look at the top 7 main topics
-
-(def top-7-topics
-  (-> (tc/group-by ds [:topic])
-      (tc/aggregate {:count tc/row-count})
-      (tc/order-by :count [:desc])
-      (tc/select-rows (range 7))))
-
-top-7-topics
-
-;; Next, let's try to write a function to count the level of similarity among a topic group.
+;; - Schools Building Projects
 ;;
-;; The idea here is to:
+;; - International Protection
 ;;
-;; 1. Create a mini-store of all the questions related to a topic
-;;
-;; 2. Check each question against this store, and count it if it has at least 1 (excluding itself) question that is similar to it, based on a threshold
-;;
-;; 3. Calculate the percentage of questions that have at least one other similar question
-
-(defn percentage-similar-questions [store questions threshold]
-  (let [qs-above-threshold
-        (reduce (fn [res question]
-                  (let [query (.content (. model embed question))
-                        matches (. store findRelevant query 100)]
-                    (conj res
-                          (-> (filter (fn [match] (> (.score match) threshold)) matches)
-                              count
-                              (- 1)))))
-                [] questions)
-        count-qs-above-threshold (count (remove zero? qs-above-threshold))]
-    (float (/ count-qs-above-threshold (count questions)))))
+;; - Health Services
 
 
-(defn category-similarity [name type threshold]
-  (let [target-questions (-> ds (tc/select-rows #(= (type %) name)) :question)
-        topic-store (InMemoryEmbeddingStore/new)
-        add-question (fn [q]
-                       (let [seg (TextSegment/from q)
-                             emb (->> seg (. model embed) (.content))]
-                         (. topic-store add emb seg)))]
-    (do
-     (mapv add-question target-questions)
-     (percentage-similar-questions topic-store target-questions threshold))))
 
-
-(let [topics (:topic top-7-topics)
-      data (mapv (fn [topic] (let [score (category-similarity topic :topic 0.9)]
-                               {:topic topic
-                                :score score}))
-                 topics)]
-  (-> (tc/dataset data)
-      (plotly/layer-bar
-       {:=x :topic
-        :=y :score})))
-
-;; At a lower threshold the topics are highly similar:
-
-(let [topics (:topic top-7-topics)
-      data (mapv (fn [topic] (let [score (category-similarity topic :topic 0.75)]
-                               {:topic topic
-                                :score score}))
-                 topics)]
-  (-> (tc/dataset data)
-      (plotly/layer-bar
-       {:=x :topic
-        :=y :score})))
-
-
-;; Based on the above, of the top 7 topics, the 'Health Services' questions seem the most diverse, which makes sense.
-
-;; We can do a similar kind of comparison with the top seven departments
-
-(def top-7-departments
-  (-> ds
-      (tc/group-by [:department])
-      (tc/aggregate {:count tc/row-count})
-      (tc/order-by :count :desc)
-      (tc/select-rows (range 7))))
-
-top-7-departments
-
-;; (let [departments (:department top-7-departments)
-;;       data (mapv (fn [department] (let [score (category-similarity department :department 0.9)]
-;;                                     {:department department
-;;                                      :score score}))
-;;                  departments)]
-;;   (-> (tc/dataset data)
-;;       (plotly/layer-bar
-;;        {:=x :department
-;;         :=y :score})))
-
-;; How about some example questions that aren't similar to other questions?
-
-(defn outlier-questions
-  "Looks for the most similar questions (excluding self) and checks if score is below threshold."
-  [topic threshold]
-  (let [target-questions (-> ds (tc/select-rows #(= (:topic %) topic)) :question)]
-    (filter (fn [question]
-              (let [query (.content (. model embed question))
-                    match (. db-store findRelevant query 2)]
-                (< (.score (second match)) threshold)))
-            target-questions)))
-
-
-(->> 0.80
-     (outlier-questions "Disability Services")
-     (str/join "\n\n")
-     kind/md)
-
-(->> 0.77
-     (outlier-questions "Health Services")
-     (str/join "\n\n")
-     kind/md)
-
-(->> 0.82
-     (outlier-questions "Schools Building Projects")
-     (str/join "\n\n")
-     kind/md)
-
-
-;; Question Similarity Curves
-
-
-;; (defn category-similarity [name type threshold]
-;;   (let [target-questions (-> ds (tc/select-rows #(= (type %) name)) :question)
-;;         topic-store (InMemoryEmbeddingStore/new)
-;;         add-question (fn [q]
-;;                        (let [seg (TextSegment/from q)
-;;                              emb (->> seg (. model embed) (.content))]
-;;                          (. topic-store add emb seg)))]
-;;     (do
-;;      (mapv add-question target-questions)
-;;      (percentage-similar-questions topic-store target-questions threshold))))
-
+(def db-store-schools (InMemoryEmbeddingStore/new))
 (def db-store-ip (InMemoryEmbeddingStore/new))
+(def db-store-health (InMemoryEmbeddingStore/new))
 
-(let [ip-questions (:question (tc/select-rows ds #(= (:topic %) "International Protection")))]
-  (count
-   (mapv (fn [q]
-           (let [seg (TextSegment/from q)
-                 emb (->> seg (. model embed) (.content))]
-             (. db-store-ip add emb seg)))
-         ip-questions)))
+;; This next step adds the relevant entrie to the above databases. We will reuse
+;; our 'add-question-to-store!' function from earlier.
 
-(def test-question-3 (first (:question (tc/select-rows ds #(= (:topic %) "International Protection")))))
+(let [schools-questions (:question (tc/select-rows ds #(= (:topic %) "Schools Building Projects")))
+      ip-questions (:question (tc/select-rows ds #(= (:topic %) "International Protection")))
+      health-questions (:question (tc/select-rows ds #(= (:topic %) "Health Services")))]
+  (do
+    (count (mapv #(add-question-to-store! % db-store-schools) schools-questions))
+    (count (mapv #(add-question-to-store! % db-store-ip) ip-questions))
+    (count (mapv #(add-question-to-store! % db-store-health) health-questions))))
+
+
+;; Next, we will write a function that, given a question, checks its similarity
+;; across all the other questions in a store.
+
+(defn db-store-size
+  "A temp/roundabout want to count the size of db
+  TODO: find better method"
+  [store]
+  (-> (json/read-value (.serializeToJson store) json/keyword-keys-object-mapper)
+      :entries
+      count))
 
 (defn all-similarity-scores [question store & ignore-self?]
-  (let [emb (.content (. model embed question))
-        result (. store findRelevant emb 200)]
+  (let [emb (.content (. embedding-model embed question))
+        result (. store findRelevant emb (db-store-size store))]
     (map-indexed (fn [idx e] {:idx idx :score (.score e)})
                  (if ignore-self? (rest result) result))))
 
+(def test-question-3 (first (:question (tc/select-rows ds #(= (:topic %) "International Protection")))))
+
+
+;; TODO: maybe cdf graph instead
+;;
+;; Below, we simply check a question against all the other questions in the
+;; store (excluding itself) and plot all the similarity scores.
+;;
 (-> (all-similarity-scores test-question-3 db-store-ip true)
     (tc/dataset)
     (plotly/layer-line
      {:=x :idx
       :=y :score}))
 
-(defn plot-n-random-scores [topic store n]
+
+;; Let's do the same thing with multiple random questions.
+
+(defn plot-n-random-scores [topic store n plot-type]
   (let [candidates (:question (tc/select-rows ds #(= (:topic %) topic)))
         selected (take n (repeatedly #(rand-nth candidates)))
         data (loop [n 0 result []]
@@ -305,59 +234,47 @@ top-7-departments
                          scores (all-similarity-scores q store true)
                          scores (map #(assoc % :question n) scores)]
                      (recur (inc n) (into result scores)))))]
-    (tc/dataset data)))
+    (if (= plot-type :hist)
+      (-> (tc/dataset data)
+          (plotly/layer-histogram
+           {:=x :score}))
+      (-> (tc/dataset data)
+          (plotly/base
+           {:=x :idx
+            :=y :score})
+          (plotly/layer-point)
+          (plotly/layer-smooth)))))
 
-(-> (plot-n-random-scores "International Protection" db-store-ip 1)
-    (plotly/base
-     {:=x :idx
-      :=y :score})
-    plotly/layer-point
-    plotly/layer-smooth)
+(plot-n-random-scores "International Protection" db-store-ip 25 :line)
 
-(-> (plot-n-random-scores "International Protection" db-store-ip 20)
-    (plotly/base
-     {:=x :idx
-      :=y :score})
-    plotly/layer-point
-    plotly/layer-smooth)
+(plot-n-random-scores "Schools Building Projects" db-store-schools 25 :line)
 
-(-> (plot-n-random-scores "International Protection" db-store-ip 50)
-    (plotly/base
-     {:=x :idx
-      :=y :score})
-    plotly/layer-point
-    plotly/layer-smooth)
+(plot-n-random-scores "Health Services" db-store-health 25 :line)
 
-(-> (plot-n-random-scores "International Protection" db-store-ip 50)
-    (plotly/layer-histogram
-     {:=x :score}))
-
-(-> (plot-n-random-scores "International Protection" db-store-ip 1)
-    (plotly/layer-histogram
-     {:=x :score}))
-
-;; For comparison, let's try an "International Protection" question
-;; within a different topic area
+;; We can also plot these as a histogram:
 
 
-(def db-store-schools (InMemoryEmbeddingStore/new))
+(plot-n-random-scores "International Protection" db-store-ip 25 :hist)
 
-(let [schools-questions (:question (tc/select-rows ds #(= (:topic %) "Schools Building Projects")))]
-  (count
-   (mapv (fn [q]
-           (let [seg (TextSegment/from q)
-                 emb (->> seg (. model embed) (.content))]
-             (. db-store-schools add emb seg)))
-         schools-questions)))
+(plot-n-random-scores "Schools Building Projects" db-store-schools 25 :hist)
 
-(def random-ip-question (rand-nth (:question (tc/select-rows ds #(= (:topic %) "International Protection")))))
+(plot-n-random-scores "Health Services" db-store-health 25 :hist)
+
+
+;; For comparison, let's use a "Health Services" question and compare how
+;; similar it is across the three sets.
+
+(def test-health-question (last (:question (tc/select-rows ds #(= (:topic %) "Health Services")))))
+
 
 (def scores-self-group-other-group
-  (let [scores-ip (all-similarity-scores random-ip-question db-store-ip true)
-        scores-ip (map (fn [s] (assoc s :batch "same-group")) scores-ip)
-        scores-sch (all-similarity-scores random-ip-question db-store-schools)
-        scores-sch (map (fn [s] (assoc s :batch "other-group")) scores-sch)]
-    (-> (concat scores-ip scores-sch)
+  (let [scores-health (all-similarity-scores test-health-question db-store-health true)
+        scores-health (map (fn [s] (assoc s :batch "Health Services")) scores-health)
+        scores-sch (all-similarity-scores test-health-question db-store-schools)
+        scores-sch (map (fn [s] (assoc s :batch "Schools Building Projects")) scores-sch)
+        scores-ip (all-similarity-scores test-health-question db-store-ip true)
+        scores-ip (map (fn [s] (assoc s :batch "International Protection")) scores-ip)]
+    (-> (concat scores-ip scores-sch scores-health)
         (tc/dataset))))
 
 (-> scores-self-group-other-group
@@ -374,103 +291,148 @@ top-7-departments
       :=color :batch
       :=mark-opacity 0.7}))
 
+;; As we can see, in general the question is more similar to other questions in
+;; its own topic area than the questions from other topic areas.
+
 ;; ## Visualising with tSNE
+;;
+;; As we saw above, our questions are embedded in the database as a vector of
+;; numbers. In a certain sense, we can think of these numbers as coordinates
+;; within a high-dimensional space.
+;;
+;; What the 't-distributed stochastic neighbor embedding' (t-SNE) method allows
+;; us to do is reduce these high-dimensional vectors into a 2d or 3d set of
+;; coordinates.
+;;
+;; A nice analogy of what is happening here is when the 3d/spherical space of
+;; the Earth's surface is translated into a 2d map. The importance of this
+;; analogy lies in the caveats that accopany these 2d representations of the
+;; earth. Different projections can convey different significations, a point
+;; that his highlighted in a scene from the West Wing where the "Cartophraphers
+;; for social equality" give a presentation to the staff on the socio-political
+;; implications of different projection techniques.
+;; - https://www.youtube.com/watch?v=AMfXVWFBrVo
+;;
+;; Similarly, with t-SNE and related methods, we have to remain conscious of the
+;; limitations of this kind of approach. There is a nice [blog
+;; post](https://distill.pub/2016/misread-tsne/) about some of the pitfalls
+;; possible when creating t-SNE plots, as well as [podcast
+;; episode](https://podcasts.apple.com/us/podcast/the-umap-algorithm-look-pretty-and-do-as-little-as-possible/id1608086450?i=1000679885413)
+;; discussing the limitation of UMAP, a similar dimension-reduction method.
+;;
+;; In the case below, we are using this technique to help illustrate the
+;; relative proximity of questions in the database. For example, in the above
+;; cases where we find matching questions, are these matches 'neighbours' in a
+;; spatial sense? But as with the above caveats, we shouldn't read too much into
+;; things like density or clusters or the magnitute of distance. At the same
+;; time might help us with our intution around how 'similarity' works across the
+;; dataset. It is also interesting to explore what kind of tools we can use
+;; within clojure!
+;;
+;; We will first look at wheather 'topic' areas appear related within this
+;; coordinate space, and then will try map where a sample question and its
+;; matches lie.
 
-(def test-data {:a [0.1 0.4 0.2] :b [0.3 0.9 0.8]})
+;; ### Topic Areas Projection
 
-(def test-data-doubles
-  (-> test-data
-      (tc/dataset)
-      (tc/rows :as-double-arrays)))
+;; We will take the three topic areas we already used above:
+;;
+;; - Schools Building Projects
+;;
+;; - International Protection
+;;
+;; - Health Services
 
-(def tsne (TSNE. test-data-doubles 2 20 200 100))
-
-(->
- (. tsne coordinates)
- (tc/dataset))
-
-
-(plotly/layer-point (-> (. tsne coordinates)
-                        (tc/dataset))
-  {:=x 0
-   :=y 1})
-
-(defn smile-minst->arr [str]
-  (let [lines (str/split-lines str)]
-    (reduce (fn [res line]
-              (conj res
-                    (let [str-nums (str/split line #"\ ")]
-                      (mapv parse-double str-nums))))
-            []
-            lines)))
-
-(defonce smile-mnist (smile-minst->arr (slurp "https://raw.githubusercontent.com/haifengl/smile/refs/heads/master/shell/src/universal/data/mnist/mnist2500_X.txt")))
-(defonce mnist-labels (str/split-lines (slurp "https://raw.githubusercontent.com/haifengl/smile/refs/heads/master/shell/src/universal/data/mnist/mnist2500_labels.txt")))
-
-
-
-(def tsne-2 (TSNE. (-> smile-mnist tc/dataset (tc/rows :as-double-arrays)) 2 5 200 1000))
-
-(plotly/layer-point (-> (. tsne-2 coordinates)
-                        (tc/dataset)
-                        (tc/add-column :label mnist-labels))
- {:=width 800
-  :=x 0
-  :=y 1
-  :=color :label})
-
-(def vecs
-  (->> (json/read-value (.serializeToJson db-store)
-                        json/keyword-keys-object-mapper)
-       :entries
-       (mapv (fn [e] (:vector (:embedding e))))
-       (tc/dataset)))
-
-
-(def tsne-3 (TSNE. (-> vecs
-                       (tc/select-rows (range 1000))
-                       (tc/rows :as-double-arrays)) 2 2 200 1000))
-
-(plotly/layer-point
- (-> (. tsne-3 coordinates)
-     (tc/dataset)
-     (tc/add-column :label (take 1000 (-> ds :topic))))
- {:=x 0
-  :=y 1
-  :=color :label
-  :=height 600
-  :=width 600})
-
-
-(def ds-schools-immigration
+(def ds-schools-immigration-health
   (-> ds
-      (tc/select-rows #(some #{(:topic %)} ["Schools Building Projects" "International Protection"]))
+      (tc/select-rows #(some #{(:topic %)} ["Schools Building Projects" "International Protection" "Health Services"]))
       (tc/select-columns [:question :topic])
       (tc/map-columns :embedding [:question] (fn [q]
                                                (->> (TextSegment/from q)
-                                                    (. model embed)
+                                                    (. embedding-model embed)
                                                     (.content)
                                                     (.vector)
                                                     vec)))))
 
-(def tsne-4
-  (TSNE.
-   (-> (into [] (:embedding ds-schools-immigration))
-       (tc/dataset)
-       (tc/rows :as-double-arrays))
-   2 25 200 1000))
+;; To reduce the embedding to a 2d space, we will use the Smile implementation of t-SNE.
+;;
+;; This function takes in 4 parameters as arguments:
+;;
+;; - number of dimensions
+;;
+;; - perplexity
+;;
+;; - learning rate
+;;
+;; - iterations
+;;
+;; The two most impactful variables are 'perplexity' and 'iterations'.
+;; Perplexity is something like the expected group 'size'. For example, if you
+;; had a dataset with a hundred points and a perpexity of 100, the alorithm
+;; would try to keep these points close together in the coordinate space.
+;;
+;; We also need to use tablecloth's transformation of the data to 'double-arrays'
+;; to transform the data to a datatype expected by the model.
+;;
+
+(defn make-t-sne-coords [dataset {:keys [dimensions perplexity learning-rate iterations]
+                                  :or {dimensions 2
+                                       perplexity 25
+                                       learning-rate 200
+                                       iterations 1000}}]
+  (let [ds (-> (into [] (:embedding dataset))
+               (tc/dataset)
+               (tc/rows :as-double-arrays)
+               (TSNE. dimensions perplexity learning-rate iterations)
+               (. coordinates)
+               (tc/dataset))]
+    (if (= dimensions 2)
+      (tc/rename-columns ds [:x :y])
+      (tc/rename-columns ds [:x :y :z]))))
+
+(defn plot-t-sne-coords [ds labels t-sne-opts plot-opts]
+  (-> ds
+      (make-t-sne-coords t-sne-opts)
+      (tc/add-column :label labels)
+      (plotly/base {:=width 700})
+      (plotly/layer-point plot-opts)))
+
+(plot-t-sne-coords ds-schools-immigration-health
+                   (:topic ds-schools-immigration-health)
+                   {:iterations 100}
+                   {:=color :label})
+
+(plot-t-sne-coords ds-schools-immigration-health
+                   (:topic ds-schools-immigration-health)
+                   {:iterations 500}
+                   {:=color :label})
+
+(plot-t-sne-coords ds-schools-immigration-health
+                   (:topic ds-schools-immigration-health)
+                   {:iterations 1000}
+                   {:=color :label})
+
+(plot-t-sne-coords ds-schools-immigration-health
+                   (:topic ds-schools-immigration-health)
+                   {:iterations 1000
+                    :perplexity 3}
+                   {:=color :label})
+
+(plot-t-sne-coords ds-schools-immigration-health
+                   (:topic ds-schools-immigration-health)
+                   {:iterations 1000
+                    :perplexity 300}
+                   {:=color :label})
 
 
-(plotly/layer-point
- (-> (. tsne-4 coordinates)
-     (tc/dataset)
-     (tc/add-column :label (:topic ds-schools-immigration)))
- {:=x 0
-  :=y 1
-  :=color :label
-  :=height 600
-  :=width 600})
+;; After 100 iterations (quite early in the process), there isn't much
+;; separation at all. After 500 iterations, the points begin to split apart.
+;; Wildly varying the perplexity doesn't seem to have a huge imapact on this
+;; visualisation.
 
+
+
+;; ### Ploting a Department's question-set
 
 ;; Filtering for topics that have more than 20 questions associated
 (def dep-justice-target-topics
@@ -489,29 +451,16 @@ top-7-departments
       (tc/select-columns [:question :topic])
       (tc/map-columns :embedding [:question] (fn [q]
                                                (->> (TextSegment/from q)
-                                                    (. model embed)
+                                                    (. embedding-model embed)
                                                     (.content)
                                                     (.vector)
                                                     vec)))))
 
-
-(def tsne-dep-justice
-  (TSNE.
-   (-> (into [] (:embedding ds-department-justice))
-       (tc/dataset)
-       (tc/rows :as-double-arrays))
-   2 20 200 1000))
-
-
-(plotly/layer-point
- (-> (. tsne-dep-justice coordinates)
-     (tc/dataset)
-     (tc/add-column :label (:topic ds-department-justice)))
- {:=x 0
-  :=y 1
-  :=color :label
-  :=height 600
-  :=width 600})
+(plot-t-sne-coords ds-department-justice
+                   (:topic ds-department-justice)
+                   {:perplexity 10
+                    :iterations 5000}
+                   {:=color :label})
 
 
 (def dep-children-target-topics
@@ -530,117 +479,58 @@ top-7-departments
       (tc/select-columns [:question :topic])
       (tc/map-columns :embedding [:question] (fn [q]
                                                (->> (TextSegment/from q)
-                                                    (. model embed)
+                                                    (. embedding-model embed)
                                                     (.content)
                                                     (.vector)
                                                     vec)))))
 
-
-(def tsne-dep-children
-  (TSNE.
-   (-> (into [] (:embedding ds-department-children))
-       (tc/dataset)
-       (tc/rows :as-double-arrays))
-   2 20 200 1000))
-
-(-> (. tsne-dep-children coordinates)
-    (tc/dataset)
-    (tc/add-column :label (:topic ds-department-children))
-    (plotly/base
-     {:=width 800
-      :=height 600})
-    (plotly/layer-point
-     {:=x 0
-      :=y 1
-      :=color :label}))
+(plot-t-sne-coords ds-department-children
+                   (:topic ds-department-children)
+                   {:perplexity 10
+                    :iterations 2000}
+                   {:=color :label})
 
 
-(kind/vega
- {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
-  :data {:values
-         (-> (. tsne-dep-justice coordinates)
-             (tc/dataset)
-             (tc/add-column :label (:topic ds-department-justice))
-             (tc/rename-columns {0 :x 1 :y})
-             (tc/rows :as-maps))}
-  :width 600
-  :height 600
-  :mark {:type :point :filled true :size 100}
-  :encoding {:x {:field :x
-                 :type :quantitative}
-             :y {:field :y
-                 :type :quantitative}
-             :color {:field :label
-                     :type :nominal}}})
-
-(kind/vega
- {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
-  :data {:values
-         (-> (. tsne-dep-children coordinates)
-             (tc/dataset)
-             (tc/add-column :label (:topic ds-department-children))
-             (tc/add-column :question (:question ds-department-children))
-             (tc/rename-columns {0 :x 1 :y})
-             (tc/rows :as-maps))}
-  :width 600
-  :height 600
-  :mark {:type :point :filled true :size 100}
-  :encoding {:x {:field :x
-                 :type :quantitative}
-             :y {:field :y
-                 :type :quantitative}
-             :color {:field :label
-                     :type :nominal}
-             :tooltip {:field :question
-                       :type :nominal}}})
-
-(kind/vega-lite
- {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
-  :data {:values
-         (-> (. tsne-4 coordinates)
-             (tc/dataset)
-             (tc/add-column :label (:topic ds-schools-immigration))
-             (tc/rename-columns {0 :x 1 :y})
-             (tc/rows :as-maps))}
-  :width 600
-  :height 600
-  :mark :point
-  :encoding {:x {:field :x
-                 :type :quantitative}
-             :y {:field :y
-                 :type :quantitative}
-             :color {:field :label
-                     :type :nominal}}})
 
 
-;; Visualise a question and the selected matching questions (neighbours)
 
-(def questions-subset
-  (->
-   (take 1000 (repeatedly #(rand-nth questions-list)))
-   distinct))
+;; ### Visualise a question and the selected matching questions (neighbours)
 
-(count questions-subset)
+(def ds-subset
+  (-> ds
+      (tc/select-rows (range 1000))))
 
+(-> ds-subset
+    (tc/group-by [:topic])
+    (tc/aggregate tc/row-count)
+    (tc/order-by "summary" :desc)
+    (tc/select-rows (range 5)))
 
-(def sample-question "How much has Enterprise Ireland spent on supporting Irish businesses in recent years?")
+;; Of these first 1,000 questions, it seems like there are 25 questions relating
+;; to "Housing Schemes", so our test question will be along those lines.
+
+(def sample-question "The Deputy asks the Minister a question about the number of vacant houses")
 
 (def questions-subset-store (InMemoryEmbeddingStore/new))
 
-(count (map #(add-question-to-store! % questions-subset-store) questions-subset))
+(count (map #(add-question-to-store! % questions-subset-store) (:question ds-subset)))
+
+;; This function, similar to ones above, returns the 5 closest matching
+;; questions. These will be what we try to visualise.
 
 (def matching-questions
-  (let [query (.content (. model embed sample-question))
+  (let [query (.content (. embedding-model embed sample-question))
         matches (. questions-subset-store findRelevant query 5)]
     (map (fn [entry] {:question (.text (.embedded entry))
                       :similarity (.score entry)})
          matches)))
 
-(def ds-subset
-  (-> ds
-      (tc/select-columns :question)
-      (tc/select-rows #(some #{(:question %)} questions-subset))))
-
+;; Next, we will add custom labels to the data. We will also add our sample
+;; question into the dataset and label it accordingly. The labels will be:
+;;
+;; - 'default' - the quesitons that haven't been matched
+;; - 'match' - one of the 5 matching questions
+;; - 'question' - the question itself
 
 (def ds-subset-labelled
   (->> (tc/rows ds-subset :as-maps)
@@ -657,66 +547,71 @@ top-7-departments
                       (assoc :similarity 0))))))
        (into [{:question sample-question
                :label "question"
-               :similarity 0}])
+               :similarity 1}])
        (tc/dataset)))
 
+
+;; Finally, we will add the embeddings to the questions.
+
+;; TODO: this fn to add embeddings is re-used a lot. Refactor
 (def ds-subset-labelled-embeddings
   (tc/map-columns ds-subset-labelled
                   :embedding [:question]
                   (fn [q]
                     (->> (TextSegment/from q)
-                         (. model embed)
+                         (. embedding-model embed)
                          (.content)
                          (.vector)
                          vec))))
 
-(def tsne-question-asked
-  (TSNE.
-   (-> (into [] (:embedding ds-subset-labelled-embeddings))
-       (tc/dataset)
-       (tc/rows :as-double-arrays))
-   2 20 200 2000))
 
 
-(kind/vega
- {:$schema "https://vega.github.io/schema/vega-lite/v5.json"
-  :data {:values
-         (-> (. tsne-question-asked coordinates)
-             (tc/dataset)
-             (tc/add-column :label (:label ds-subset-labelled))
-             (tc/add-column :question (:question ds-subset-labelled))
-             (tc/add-column :similarity (:similarity ds-subset-labelled))
-             (tc/rename-columns {0 :x 1 :y})
-             (tc/rows :as-maps))}
-  :width 600
-  :height 600
-  :mark {:type :point :filled true :size 100}
-  :encoding {:x {:field :x
-                 :type :quantitative}
-             :y {:field :y
-                 :type :quantitative}
-             :color {:field :label
-                     :type :nominal}
-             :tooltip {:field :similarity
-                       :type :quantitative}}})
+(plot-t-sne-coords ds-subset-labelled-embeddings
+                   (:label ds-subset-labelled-embeddings)
+                   {}
+                   {:=color :label
+                    :=mark-opacity 0.6})
 
 
-(def tsne-question-asked-3d
-  (TSNE.
-   (-> (into [] (:embedding ds-subset-labelled-embeddings))
-       (tc/dataset)
-       (tc/rows :as-double-arrays))
-   3 20 200 2000))
+(def q-test-ds
+  (-> (make-t-sne-coords ds-subset-labelled-embeddings {:perplexity 10})
+      (tc/dataset)
+      (tc/rename-columns [:x :y])
+      (tc/add-column :label (:label ds-subset-labelled))
+      (tc/add-column :question (:question ds-subset-labelled))
+      (tc/add-column :similarity (:similarity ds-subset-labelled))))
 
-(-> (. tsne-question-asked-3d coordinates)
-    (tc/dataset)
-    (tc/add-column :label (:label ds-subset-labelled))
-    (plotly/base
-     {:=width 800
-      :=coordinates :3d})
-    (plotly/layer-point
-     {:=x 0
-      :=y 1
-      :=z 2
-      :=color :label
-      :=mark-opacity 0.7}))
+(kind/echarts
+ {:tooltip {}
+  :xAxis {}
+  :yAxis {}
+  :series [{:data (-> q-test-ds
+                      (tc/select-rows #(= (% :label) "question"))
+                      (tc/select-columns [:x :y])
+                      (tc/rows :as-vectors))
+            :name "Question"
+            :symbolSize 20
+            :type "scatter"}
+           {:data (-> q-test-ds
+                      (tc/select-rows #(= (% :label) "match"))
+                      (tc/select-columns [:x :y])
+                      (tc/rows :as-vectors))
+            :name "Match"
+            :type "scatter"
+            :symbolSize 15}
+           {:data (-> q-test-ds
+                      (tc/select-rows #(= (% :label) "default"))
+                      (tc/select-columns [:x :y])
+                      (tc/rows :as-vectors))
+            :itemStyle {:opacity 0.3}
+            :name "Default"
+            :type "scatter"}]})
+
+
+;; 3d Plot
+
+(plot-t-sne-coords ds-subset-labelled-embeddings
+                   (:label ds-subset-labelled-embeddings)
+                   {:perplexity 10 :dimensions 3}
+                   {:=color :label :=coordinates :3d
+                    :=mark-opacity 0.5})
