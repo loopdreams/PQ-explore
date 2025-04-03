@@ -1,6 +1,6 @@
 ;; # RAG Test
 (ns notebooks.rag
-  (:require [notebooks.question-vdb :refer [query-db-store add-question-to-store! model db-store]]
+  (:require [notebooks.question-vdb :refer [query-db-store add-question-to-store! embedding-model db-store]]
             [notebooks.preparation :refer [ds]]
             [clj-http.client :as client]
             [scicloj.kindly.v4.kind :as kind]
@@ -246,7 +246,7 @@
 ;; The measurement method is fairly crude, but this reflects the data we are dealing with - unstructured text. My approach here is to
 ;; simply retrieve the 5 most similar answers from the vector database, and record the min, max and average of these 5 scores.
 (defn add-similarity-scores [model-data store]
-  (let [query  (.content (. model embed (:response model-data)))
+  (let [query  (.content (. embedding-model embed (:response model-data)))
         result (. store findRelevant query 5)
         scores (mapv #(.score %) result)
         max    (first scores)
@@ -353,7 +353,7 @@
 
 (defn conduct-supervisor-revisions [m-data store]
   (let [supervisor-revision (ask-llm-supervisor m-data)
-        revision-score-query (.content (. model embed supervisor-revision))
+        revision-score-query (.content (. embedding-model embed supervisor-revision))
         result (. store findRelevant revision-score-query 5)
         scores (mapv #(.score %) result)
         max (first scores)
@@ -406,7 +406,7 @@
 
 (defn similarity-test [text store]
   (if (= (str/trim text) "") 0
-      (let [query (.content (. model embed text))
+      (let [query (.content (. embedding-model embed text))
             result (. store findRelevant query 5)
             scores (mapv (fn [r] (.score r)) result)]
         (float (/ (reduce + scores) (count scores))))))
