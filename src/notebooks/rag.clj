@@ -167,10 +167,10 @@
 ;;
 ;; TODO: describe questions/topics here
 ;;
-(def test-question-1 "Deputy Emer Currie asked the Minister for Transport his plans to expand EV charging points at the State's airports to facilitate more EV drivers and an increase in EV car rental; and if he will make a statement on the matter.")
+(def test-question-1 "Deputy Holly Cairns asked the Irish Minister for Education if SNA training will be reviewed in order that SNAs receive a level of training before they enter the classroom.")
 #_(def test-question-2 "Deputy Paul McAuliffe asked the Minister for Education if it is planned to provide further supports to Irish schools experiencing difficulties with funding and increased costs of utilities; and if she will make a statement on the matter.")
 (def test-question-2 "Deputy Peter 'Chap' Cleere asked the Irish Minister for Enterprise, Trade and Employment if he will report on the south east regional enterprise plan; if a new plan is being prepared; and if he will make a statement on the matter.")
-(def test-question-3 "Deputy Holly Cairns asked the Irish Minister for Education if SNA training will be reviewed in order that SNAs receive a level of training before they enter the classroom.")
+(def test-question-3 "Deputy Emer Currie asked the Minister for Transport his plans to expand EV charging points at the State's airports to facilitate more EV drivers and an increase in EV car rental; and if he will make a statement on the matter.")
 
 ;; #### Running the models:
 (comment
@@ -220,12 +220,12 @@
   (let [files (rest (file-seq (io/file dir)))]
     (reduce (fn [res file] (into res (edn/read-string (slurp file)))) [] files)))
 
-(def model-responses-question-1 (combine-model-responses "data/test_question_1"))
-(def model-responses-question-2 (combine-model-responses "data/question_2"))
-(def model-responses-question-3 (combine-model-responses "data/question_3"))
-
+(def model-responses-question-1 (combine-model-responses "data/question_1"))
+(comment
+  (def model-responses-question-2 (combine-model-responses "data/question_2"))
+  (def model-responses-question-test (combine-model-responses "data/test_question_1")))
 ;; A quick look at what is inside these reponses,.
-(kind/pprint (first model-responses-question-3))
+(kind/pprint (first model-responses-question-1))
 
 
 ;; ## Testing Responses
@@ -260,14 +260,15 @@
 
 ;; Let's see what the data looks like after adding the scores:
 
-(-> (first model-responses-question-2)
+(-> (first model-responses-question-1)
     (add-similarity-scores db-store-answers)
     (kind/pprint))
 
 ;; Adding the scores to all the data previously generated
 (def model-scores-q1 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-1))
-(def model-scores-q2 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-2))
-(def model-scores-q3 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-3))
+(comment
+  (def model-scores-q2 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-2))
+  (def model-scores-q-test (mapv #(add-similarity-scores % db-store-answers) model-responses-question-test)))
 
 ;; To test that the vector database is actually working as intended, I have added a 'nonsense' response here, which
 ;; should not be similar at all to the responses in the database. The text is the first two verses from Lewis Carrol's
@@ -290,7 +291,7 @@
           [] data))
 
 
-(-> (sort-by :avg (concat model-scores-q2))
+(-> (sort-by :avg (concat model-scores-q1))
     (box-plot-data-layout)
     (tc/dataset)
     (tc/order-by :max :desc)
@@ -303,7 +304,7 @@
 
 ;; Another box plot, using Vega Lite. This time we will also include the 'control'
 (kind/vega-lite
- {:data {:values (->> (reverse (sort-by :max (box-plot-data-layout (concat model-scores-q3 [nonsense-response-scores]))))
+ {:data {:values (->> (reverse (sort-by :max (box-plot-data-layout (concat model-scores-q1 [nonsense-response-scores]))))
                       (mapv (fn [m-data]
                               (update m-data :model-ref (partial str (str (:context? m-data) "-"))))))}
   :width 600
@@ -317,7 +318,7 @@
 
 ;; Finally let's join all the question responses together and plot the best models
 
-(-> (sort-by :avg (concat model-scores-q2 model-scores-q3 [nonsense-response-scores]))
+(-> (sort-by :avg (concat model-scores-q1 [nonsense-response-scores]))
     (box-plot-data-layout)
     (tc/dataset)
     (plotly/base {:=width 800 :=height 400})
@@ -368,13 +369,13 @@
 
 (comment
   (defonce revisions-added-q3 (mapv #(conduct-supervisor-revisions % db-store-answers)
-                                    model-responses-question-3)))
+                                    model-responses-question-1)))
 
-(defonce revisions-added-q3 (edn/read-string (slurp "data/test_supervisor_revisions.edn")))
+(defonce revisions-added-q1 (edn/read-string (slurp "data/test_supervisor_revisions.edn")))
 
 
 
-(-> (mapv #(add-similarity-scores % db-store-answers) revisions-added-q3)
+(-> (mapv #(add-similarity-scores % db-store-answers) revisions-added-q1)
     (tc/dataset)
     (tc/drop-rows #(= (:context? %) "without-context"))
     (tc/order-by :max :desc)
@@ -424,7 +425,7 @@
     data))
 
 (kind/table
- (response-sentence-scores (first model-scores-q3)))
+ (response-sentence-scores (first model-scores-q1)))
 
 
 (defn get-score-color [score]
@@ -449,9 +450,9 @@
 
 ;; Coloring response scores, from 'worst' to 'best'
 
-(kind/md test-question-3)
+(kind/md test-question-1)
 
-(->> (sort-by :max (concat model-scores-q3 [nonsense-response-scores]))
+(->> (sort-by :max (concat model-scores-q1 [nonsense-response-scores]))
      (mapv response-sentence-scores)
      (mapv color-response-score)
      (into [:div])
