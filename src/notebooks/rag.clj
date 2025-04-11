@@ -38,109 +38,140 @@
                              :answer)]
     (str/join "\n" previous-answers)))
 
-;; TODO: try adjusting prompt to instruct not to format answer with any markup
+;; TODO: add in questions to context
 (defn make-context-prompt [question]
   (let [ctx (build-context question)]
-    (str "You are a responsible government official. Provide an informative, short answer to the user's question, using the supplied context only."
+    (str "You are a responsible government official. Provide an informative, short answer to the user's question, using the supplied context only. Don't use any markup in your answer."
          " Context: " ctx)))
 
 ;; ### Different API calls
 ;;
 ;; #### Local
 ;; Local models are run on Ollama
-
-(defn ask-llm-local [{:keys [question model skip-context?]}]
-  (-> (client/post "http://localhost:11434/api/chat"
-                   {:form-params
-                    {:model model
-                     :messages (if skip-context?
-                                 [{:role "user" :content question}]
-                                 [{:role "system" :content (make-context-prompt question)}
-                                  {:role "user" :content question}])
-                     :stream false}
-                    :content-type :json})
-      :body
-      (json/read-value json/keyword-keys-object-mapper)
-      :message :content))
+(defn api-llm-local [model form]
+  (client/post "http://localhost:11434/api/chat"
+               {:form-params
+                {:model model
+                 :messages form
+                 :stream false}
+                :content-type :json}))
 
 ;; #### Openai
-(defn ask-llm-openai [{:keys [question model skip-context?]}]
-  (->
-   (api/create-chat-completion
-    {:model model
-     :messages (if skip-context?
-                 [{:role "user" :content question}]
-                 [{:role "system" :content (make-context-prompt question)}
-                  {:role "user" :content question}])}
-    {:api-key (:openai-api-key (clojure.edn/read-string (slurp "secrets.edn")))})
-   :choices first :message :content))
+(defn api-llm-openai [model form]
+  (api/create-chat-completion
+   {:model model
+    :messages form}
+   {:api-key (:openai-api-key (edn/read-string (slurp "secrets.edn")))}))
 
 ;; #### Google
-(defn ask-llm-google [{:keys [question model skip-context?]}]
-  (-> (client/post (str "https://generativelanguage.googleapis.com/v1beta/models/"
-                        model
-                        ":generateContent?key="
-                        (:gemini-api-key (edn/read-string (slurp "secrets.edn"))))
-                   {:form-params
-                    (if skip-context?
-                      {:contents {:parts [{:text question}]}}
-                      {:system_instruction
-                       {:parts [{:text (make-context-prompt question)}]}
-                       :contents {:parts [{:text question}]}})
-                    :content-type :json})
-      :body
-      (json/read-value json/keyword-keys-object-mapper)
-      :candidates first :content :parts first :text))
+(defn api-llm-google [model form]
+  (client/post (str "https://generativelanguage.googleapis.com/v1beta/models/"
+                    model
+                    ":generateContent?key="
+                    (:gemini-api-key (edn/read-string (slurp "secrets.edn"))))
+               {:form-params form
+                :content-type :json}))
 
 ;; #### Anthropic - Claude
-(defn ask-llm-claude [{:keys [question model skip-context?]}]
-  (-> (client/post "https://api.anthropic.com/v1/messages"
-                   {:form-params
-                    {:model model
-                     :max_tokens 1024
-                     :system (if skip-context? "You are a responsible government official."
-                                 (make-context-prompt question))
-                     :messages [{:role "user" :content question}]}
-                    :content-type :json
-                    :headers {:x-api-key (:anthropic-api-key (edn/read-string (slurp "secrets.edn")))
-                              :anthropic-version "2023-06-01"}})
-      :body
-      (json/read-value json/keyword-keys-object-mapper)
-      :content first :text))
+(defn api-llm-claude [model form]
+  (client/post "https://api.anthropic.com/v1/messages"
+               {:form-params
+                (merge
+                 {:model model
+                  :max_tokens 1024}
+                 form)
+                :content-type :json
+                :headers {:x-api-key (:anthropic-api-key (edn/read-string (slurp "secrets.edn")))
+                          :anthropic-version "2023-06-01"}}))
 
-;; ### Model References
+;; Helpers to extract content from the responses.
+(defn resp->body [resp] (-> resp :body (json/read-value json/keyword-keys-object-mapper)))
+(defn get-content-llm-local [resp] (-> resp resp->body :message :content))
+(defn get-content-llm-openai [resp] (-> resp :choices first :message :content))
+(defn get-content-llm-google [resp] (-> resp resp->body :candidates first :content :parts first :text))
+(defn get-content-llm-claude [resp] (-> resp resp->body  :content first :text))
 
-(def local-llm-models
-  [{:name "Llama3.1" :parameters "8B" :model-ref "llama3.1" :model-type "local"}
-   {:name "Llama3.1" :parameters "3B" :model-ref "llama3.2" :model-type "local"}
-   {:name "Mistral" :parameters "7B" :model-ref "mistral" :model-type "local"}
-   {:name "LLaVa" :parameters "7B" :model-ref "llava" :model-type "local"}
-   {:name "Deepseek R1" :parameters "7B" :model-ref "deepseek-r1" :model-type "local"}
-   {:name "Gemma 3" :parameters "1B" :model-ref "gemma3:1b" :model-type "local"}
-   {:name "Gemma 3" :parameters "4B" :model-ref "gemma3" :model-type "local"}
-   {:name "Granite 3.2" :parameters "8B" :model-ref "granite3.2" :model-type "local"}])
+;; TODO: these fns return the text content of resp. Maybe consider what other data might be relevant
+(defn ask-llm-openai [{:keys [question model-ref system-prompt]}]
+  (->
+   (api-llm-openai model-ref
+                   (if system-prompt
+                     [{:role "system" :content system-prompt}
+                      {:role "user" :content question}]
+                     [{:role "user" :content question}]))
+   get-content-llm-openai))
 
-(def openai-llm-models
-  [{:name "GPT-4 Mini" :parameters "? 8B" :model-ref "gpt-4o-mini" :price-in 0.15 :price-out 0.6 :model-type "cloud"}
-   {:name "GPT-3.5 Turbo" :parameters "?" :model-ref "gpt-3.5-turbo" :price-in 0.5 :price-out 1.5 :model-type "cloud"}])
-
-(def google-llm-models
-  [{:name "Gemini 2.0 Flash" :parameters "?" :model-ref "gemini-2.0-flash" :model-type "cloud"}
-   {:name "Gemini 2.0 Flash Lite" :parameters "?" :model-ref "gemini-2.0-flash-lite" :model-type "cloud"}
-   {:name "Gemini 2.5 Pro" :parameters "?" :model-ref "gemini-2.5-pro-exp-03-25" :model-type "cloud"}])
-
-(def anthropic-llm-models
-  [{:name "Claude 3.7 Sonnet" :model-ref "claude-3-7-sonnet-20250219" :price-in 3.0 :price-out 15.0 :parameters "?" :model-type "cloud"}
-   {:name "Claude 3.5 Haiku" :model-ref "claude-3-5-haiku-20241022" :price-in 0.8 :price-out 4.0 :parameters "?" :model-type "cloud"}
-   {:name "Claude 3 Haiku" :model-ref "claude-3-haiku-20240307" :price-in 0.25 :price-out 1.25 :parameters "?" :model-type "cloud"}])
+(defn ask-llm-google [{:keys [question model-ref system-prompt]}]
+  (->
+   (api-llm-google model-ref
+                   (if system-prompt
+                     {:system_instruction
+                      {:parts [{:text system-prompt}]}
+                      :contents {:parts [{:text question}]}}
+                     {:contents {:parts [{:text question}]}}))
+   (get-content-llm-google)))
 
 
-(kind/table (sort-by :name (concat local-llm-models
-                                   openai-llm-models
-                                   google-llm-models
-                                   anthropic-llm-models)))
+(defn ask-llm-claude [{:keys [question model-ref system-prompt]}]
+  (->
+   (api-llm-claude
+    model-ref
+    {:system (or system-prompt "You are a responsible government official.")
+     :messages [{:role "user" :content question}]})
+   (get-content-llm-claude)))
 
-;; ### Running the Models and Storing Responses
+
+(defn ask-llm-local [{:keys [question model-ref system-prompt]}]
+  (->
+   (api-llm-local model-ref
+                  (if system-prompt
+                    [{:role "system" :content system-prompt}
+                     {:role "user" :content question}]
+                    [{:role "user" :content question}]))
+   (get-content-llm-local)))
+
+
+;; ## Model References
+
+(def llm-models
+  [{:platform "Ollama" :name "Llama3.1" :parameters "8B" :model-ref "llama3.1" :model-type "local"}
+   {:platform "Ollama" :name "Llama3.1" :parameters "3B" :model-ref "llama3.2" :model-type "local"}
+   {:platform "Ollama" :name "Mistral" :parameters "7B" :model-ref "mistral" :model-type "local"}
+   {:platform "Ollama" :name "LLaVa" :parameters "7B" :model-ref "llava" :model-type "local"}
+   {:platform "Ollama" :name "Deepseek R1" :parameters "7B" :model-ref "deepseek-r1" :model-type "local"}
+   {:platform "Ollama" :name "Gemma 3" :parameters "1B" :model-ref "gemma3:1b" :model-type "local"}
+   {:platform "Ollama" :name "Gemma 3" :parameters "4B" :model-ref "gemma3" :model-type "local"}
+   {:platform "Ollama" :name "Granite 3.2" :parameters "8B" :model-ref "granite3.2" :model-type "local"}
+   {:platform "OpenAI" :name "GPT-4 Mini" :parameters "? 8B" :model-ref "gpt-4o-mini" :price-in 0.15 :price-out 0.6 :model-type "cloud"}
+   {:platform "OpenAI" :name "GPT-4o" :parameters "?" :model-ref "gpt-4o" :price-in 2.5 :price-out 10 :model-type "cloud"}
+   {:platform "OpenAI" :name "GPT-o3 Mini" :parameters "?" :model-ref "gpt-o3-mini" :price-in 1.10 :price-out 4.40 :model-type "cloud"}
+   {:platform "OpenAI" :name "GPT-3.5 Turbo" :parameters "?" :model-ref "gpt-3.5-turbo" :price-in 0.5 :price-out 1.5 :model-type "cloud"}
+   {:platform "Google" :name "Gemini 2.0 Flash" :parameters "?" :model-ref "gemini-2.0-flash" :model-type "cloud"}
+   {:platform "Google" :name "Gemini 2.0 Flash Lite" :parameters "?" :model-ref "gemini-2.0-flash-lite" :model-type "cloud"}
+   {:platform "Google" :name "Gemini 2.5 Pro" :parameters "?" :model-ref "gemini-2.5-pro-exp-03-25" :model-type "cloud"}
+   {:platform "Anthropic" :name "Claude 3.7 Sonnet" :model-ref "claude-3-7-sonnet-20250219" :price-in 3.0 :price-out 15.0 :parameters "?" :model-type "cloud"}
+   {:platform "Anthropic" :name "Claude 3.5 Haiku" :model-ref "claude-3-5-haiku-20241022" :price-in 0.8 :price-out 4.0 :parameters "?" :model-type "cloud"}
+   {:platform "Anthropic" :name "Claude 3 Haiku" :model-ref "claude-3-haiku-20240307" :price-in 0.25 :price-out 1.25 :parameters "?" :model-type "cloud"}])
+
+;; A wrapper function to check which api to use
+;; TODO: add in system prompt as option
+(defn ask-llm [{:keys [model-ref] :as params}]
+  (let [get-models (fn [platform] (->>  llm-models
+                                        (filterv #(= (:platform %) platform))
+                                        (mapv :model-ref)
+                                        (into #{})))]
+    (condp some [model-ref]
+      (get-models "Ollama")    (ask-llm-local params)
+      (get-models "OpenAI")    (ask-llm-openai params)
+      (get-models "Google")    (ask-llm-google params)
+      (get-models "Anthropic") (ask-llm-claude params)
+      nil)))
+
+
+
+(kind/table (sort-by :name llm-models))
+
+;; ## Running the Models and Storing Responses
 ;;
 ;; To save time, especially since the local models take a LONG time to run on my Macbook M1, responses
 ;; are written to the 'data' folder in edn format. The functions below help with this.
@@ -149,31 +180,90 @@
   (str (quot (System/currentTimeMillis) 1000)))
 
 ;; TODO: store responses for a question in folder, then, add all respsones later
-(defn run-models-and-write-answers-to-disk! [models question ask-fn directory & skip-context?]
-  (spit (str "data/" directory "/" (unix-timestamp) "-model_responses.edn")
-        (reduce (fn [res {:keys [model-ref] :as model}]
-                  (let [answer (ask-fn {:question question :model model-ref :skip-context? (when skip-context? true)})]
-                    (conj res (-> model
-                                  (assoc :question question)
-                                  (assoc :response answer)
-                                  (assoc :context? (if skip-context? "without-context" "with-context"))))))
-                []
-                models)))
+(defn run-models-and-write-answers-to-disk! [models question directory & skip-context?]
+  (let [save-location (str "data/" directory "/" (unix-timestamp) "-model_responses.edn")]
+    (io/make-parents save-location)
+    (spit save-location
+          (reduce (fn [res {:keys [model-ref] :as model}]
+                    (let [answer (ask-llm {:question question
+                                           :model-ref model-ref
+                                           :system-prompt (when-not skip-context? (make-context-prompt question))})]
+                      (conj res (-> model
+                                    (assoc :question question)
+                                    (assoc :response answer)
+                                    (assoc :context? (if skip-context? "without-context" "with-context"))))))
+                  []
+                  models))))
 
-;; #### Test Questions
-;; These questions were taken from outside of the time-frame of the dataset. I have added the
-;; word 'Irish' to the questions, as a way of helping the models to respond when there is no
-;; context provided.
+;; ### Test Questions
 ;;
-;; TODO: describe questions/topics here
+;; Ideally, we would test the models on a large set of questions. For example, we could ask the model to
+;; generate sample questions based on the material within the vector database.
+;;
+;; However, for this exercise, we will just look at some specific sample questions, to try to better understand
+;; the responses that are produced.
+;;
+;; We will look at:
+;;
+;; 1. A real question that was asked
+;;
+;; 2. A question based on specific data in the dataset
+;;
+;; 3. A general/broad question
+;;
+;; #### A Real Question
+;; Our dataset ranges from around January to March 2024, so we will take a
+;; question that was asked after that time. You can see the question and its
+;; answer [on the Oireachtas website](https://www.oireachtas.ie/en/debates/question/2024-04-09/972/)
+;;
+;; I've added the word 'Irish' to the question for the times when we are asking the model without providing context.
+
+(def sample-question-1 "Deputy Michael Lowry asked the Irish Minister for Agriculture, Food and the Marine if conversion of conifer crops to native woodland is permitted under the Native Woodland Conservation scheme 2023-2027 recently launched by his Department; and if he will make a statement on the matter.")
+
+
+;; #### A Targeted Question
+;; To find what kind of information we'd like to target, let's look at some answers that contain figures
+
+(-> ds
+    (tc/drop-missing :answer)
+    (tc/select-rows #(re-find #"\d+" (% :answer)))
+    (tc/select-rows (range 10 11))
+    :answer)
+
+;; The answer here, about the 'Microgeneration Support Scheme', will do.
+
+(def sample-question-2 "When was the Microgeneration Support Scheme approved by the Irish Government, and what is the maximum amount available for a grant?")
+
+;; The expected answers for this question would be
+;;
+;; - 21 December 2021
+;;
+;; - 2,100 EUR
+
+
+;; #### A general question
+
+(def sample-question-3 "What is the Irish government doing to tackle climate change?")
+
 ;;
 (def test-question-1 "Deputy Holly Cairns asked the Irish Minister for Education if SNA training will be reviewed in order that SNAs receive a level of training before they enter the classroom.")
 #_(def test-question-2 "Deputy Paul McAuliffe asked the Minister for Education if it is planned to provide further supports to Irish schools experiencing difficulties with funding and increased costs of utilities; and if she will make a statement on the matter.")
 (def test-question-2 "Deputy Peter 'Chap' Cleere asked the Irish Minister for Enterprise, Trade and Employment if he will report on the south east regional enterprise plan; if a new plan is being prepared; and if he will make a statement on the matter.")
 (def test-question-3 "Deputy Emer Currie asked the Minister for Transport his plans to expand EV charging points at the State's airports to facilitate more EV drivers and an increase in EV car rental; and if he will make a statement on the matter.")
 
-;; #### Running the models:
+;; ### Running the models:
 (comment
+  ;; test-run
+  (-> (filterv #(= (:model-ref %) "gemini-2.0-flash") llm-models)
+      (run-models-and-write-answers-to-disk! sample-question-1 "testing_question_1"))
+  (-> (filterv #(= (:model-ref %) "gpt-3.5-turbo") llm-models)
+      (run-models-and-write-answers-to-disk! sample-question-1 "testing_question_1"))
+
+
+
+
+
+
   (time (run-models-and-write-answers-to-disk! local-llm-models test-question-1 ask-llm-local "question_1"))
   (time (run-models-and-write-answers-to-disk! openai-llm-models test-question-1 ask-llm-openai "question_1"))
   (time (run-models-and-write-answers-to-disk! google-llm-models test-question-1 ask-llm-google "question_1"))
@@ -211,7 +301,7 @@
   (time (run-models-and-write-answers-to-disk! anthropic-llm-models test-question-3 ask-llm-claude "question_3" true)))
 
 
-;; #### Combining Responses
+;; ### Combining Responses
 ;; I ran each of the types of models separately, mainly for debugging purposes. However, these could
 ;; also be run as a single batch. Since they are saved as separate batehes, this small function just
 ;; pulls the files together into a dataset to work with later.
@@ -221,6 +311,12 @@
     (reduce (fn [res file] (into res (edn/read-string (slurp file)))) [] files)))
 
 (def model-responses-question-1 (combine-model-responses "data/question_1"))
+
+(def testing-model-responses-question-1 (combine-model-responses "data/testing_question_1"))
+
+(kind/table
+ testing-model-responses-question-1)
+
 (comment
   (def model-responses-question-2 (combine-model-responses "data/question_2"))
   (def model-responses-question-test (combine-model-responses "data/test_question_1")))
@@ -231,6 +327,16 @@
 ;; ## Testing Responses
 ;; To test the responses, we will firstly build a vector database of all previous answers. This
 ;; is the same process that was used to build the questions vector database.
+;;
+;; This approach is quite crude, but I am exploring it here as a starting point.
+;; In the future, it might be better to explore other metrics that are used in
+;; this space such as:
+;;
+;; - ROUGE
+;; - Token Overlap
+;; - BLEU
+;; - DeBERT (for measureing semantic equivalence)
+;;
 
 ;; TODO: These are stored as file to avoid always loading them. For final version uncomment these.
 (comment
@@ -266,6 +372,7 @@
 
 ;; Adding the scores to all the data previously generated
 (def model-scores-q1 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-1))
+(def model-scores-testing (mapv #(add-similarity-scores % db-store-answers) testing-model-responses-question-1))
 (comment
   (def model-scores-q2 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-2))
   (def model-scores-q-test (mapv #(add-similarity-scores % db-store-answers) model-responses-question-test)))
@@ -291,7 +398,7 @@
           [] data))
 
 
-(-> (sort-by :avg (concat model-scores-q1))
+(-> (sort-by :avg model-scores-testing)
     (box-plot-data-layout)
     (tc/dataset)
     (tc/order-by :max :desc)
@@ -304,7 +411,7 @@
 
 ;; Another box plot, using Vega Lite. This time we will also include the 'control'
 (kind/vega-lite
- {:data {:values (->> (reverse (sort-by :max (box-plot-data-layout (concat model-scores-q1 [nonsense-response-scores]))))
+ {:data {:values (->> (reverse (sort-by :max (box-plot-data-layout (concat model-scores-testing [nonsense-response-scores]))))
                       (mapv (fn [m-data]
                               (update m-data :model-ref (partial str (str (:context? m-data) "-"))))))}
   :width 600
@@ -336,13 +443,13 @@
 ;; In the above comparisons, gemini 2 Flash seems to do quite well with this type of exercise. Let's try to insert that model as a
 ;; 'supervisor' for the other models, and see if it can help improve the answers.
 
-(defn ask-llm-supervisor [{:keys [question response]}]
+(defn ask-llm-supervisor-to-improve [{:keys [question response]}]
   (-> (client/post (str "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
                         (:gemini-api-key (edn/read-string (slurp "secrets.edn"))))
                    {:form-params
                     {:contents
                      {:parts
-                      [{:text (str "You are a dilligent senior officer at a government department. Try to improve the following answer, based on the context provided. Try to keep the new answer as short as possible."
+                      [{:text (str "You are a dilligent senior official at a government department. Try to improve the following answer, based on the context provided. Try to keep the new answer as short as possible."
                                    "QUESTION: " question
                                    "ANSWER: " response
                                    "CONTEXT: " (build-context question))}]}}
@@ -351,9 +458,75 @@
       (json/read-value json/keyword-keys-object-mapper)
       :candidates first :content :parts first :text))
 
+(defn format-model-responses [m-data-all]
+  (->> (mapv :response m-data-all)
+       (map-indexed vector)
+       (mapv (fn [[idx resp]]
+               (str "--Beginning of Reponse Number " (str (inc idx)) " --"
+                    resp
+                    "--End of Response Number " (str (inc idx)) " --")))
+       (str/join "\n")))
+
+(defn ask-llm-supervisor-ranking [m-data-all supervisor-model]
+  (let [model-responses (format-model-responses m-data-all)
+        question (:question (first m-data-all))
+        context (build-context question)
+        query (str/join "\n"
+                        ["You are a dilligent senior official at a government department. Based on the following question and context, rank the subsequent responses in order of best to worst. Please also include a simple json-friendly list of the ranking numbers at the end."
+                         (str "Question: " question)
+                         (str "Context: " context "--- End of Context ---")
+                         model-responses])]
+    (ask-llm {:model-ref supervisor-model :question query})))
+
+(comment
+  (spit "data/testing_google_supervisor.txt" (ask-llm-supervisor-ranking model-scores-testing "gemini-2.0-flash")))
+
+(comment
+  (defonce test-ranking
+    (ask-llm-supervisor-ranking model-responses-question-1))
+
+  (defonce test-ranking-2
+    (ask-llm-supervisor-ranking model-responses-question-1))
+  (defonce test-ranking-3
+    (ask-llm-supervisor-ranking model-responses-question-1))
+  (defonce test-ranking-GPT
+    (ask-llm-supervisor-ranking-gpt model-responses-question-1)))
+
+(def test-ranking-results [10 19 32 16 15 30 31 13 9 14 20 12 11 29 21 17 24 25 18 27 1 3 2 28 23 7 4 22 5 26 8])
+(def test-ranking-results-re-run [10 3 9 27 28 21 12 14 6 13 17 11 29 18 16 15 19 32 30 31 24 25 2 1 23 4 20 7 26 8 22 5])
+(def test-ranking-results-GPT [21 18 6 3 10 1 12 2 4 19 15 20 7 5 11 25 17 22 26 9])
+
+
+
+
+(defn add-llm-ranking-score [m-data scores]
+  (loop [[x & xs] scores
+         idx (count scores)
+         new-data []]
+    (if-not x new-data
+            (recur xs (dec idx)
+                   (conj new-data (assoc  (nth m-data (dec x)) :llm-score idx))))))
+
+(->
+ (mapv #(add-similarity-scores % db-store-answers) (add-llm-ranking-score model-responses-question-1 test-ranking-results))
+ (tc/dataset)
+ (plotly/base
+  {:=x :llm-score
+   :=y :max})
+ (plotly/layer-point)
+ (plotly/layer-smooth))
+
+
+(kind/md
+ (:response
+  (nth model-responses-question-1 9)))
+
+
+
+
 
 (defn conduct-supervisor-revisions [m-data store]
-  (let [supervisor-revision (ask-llm-supervisor m-data)
+  (let [supervisor-revision (ask-llm-supervisor-to-improve m-data)
         revision-score-query (.content (. embedding-model embed supervisor-revision))
         result (. store findRelevant revision-score-query 5)
         scores (mapv #(.score %) result)
