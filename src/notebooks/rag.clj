@@ -11,12 +11,8 @@
             [wkok.openai-clojure.api :as api]
             [clojure.edn :as edn]
             [clojure.java.io :as io])
-  (:import (dev.langchain4j.data.embedding Embedding)
-           (dev.langchain4j.data.segment TextSegment)
-           (dev.langchain4j.model.embedding EmbeddingModel)
-           (dev.langchain4j.store.embedding EmbeddingMatch)
-           (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
-           (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
+  (:import (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)))
+
 
 ;; A short test for demonstrating how to provide a LLM with context from existing similar questions.
 ;;
@@ -338,12 +334,13 @@
 ;; - DeBERT (for measureing semantic equivalence)
 ;;
 
-;; TODO: These are stored as file to avoid always loading them. For final version uncomment these.
 (comment
-  (def db-store-answers-temp (InMemoryEmbeddingStore/new))
-  (def answers-list (-> ds (tc/drop-missing :answer) :answer))
-  (count (map #(add-question-to-store! (str %) db-store-answers-temp) answers-list))
-  (spit "data/db-store-answers.json" (.serializeToJson db-store-answers)))
+  (let [db-store-answers (InMemoryEmbeddingStore/new)
+        answers-list (-> ds (tc/drop-missing :answer) :answer)
+        add-to-store! (count (map #(add-question-to-store! (str %) db-store-answers) answers-list))]
+    (println (str add-to-store! " records added to db-store"))
+    (spit "data/db-store-answers.json" (.serializeToJson db-store-answers))))
+
 
 
 (def db-store-answers (InMemoryEmbeddingStore/fromFile "data/db-store-answers.json"))
@@ -433,9 +430,6 @@
      {:=x :model-ref
       :=y :score
       :=color :context?}))
-
-
-
 
 
 ;; ### LLM 'Supervisor'
