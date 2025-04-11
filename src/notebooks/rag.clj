@@ -2,6 +2,7 @@
 (ns notebooks.rag
   (:require [notebooks.question-vdb :refer [query-db-store add-question-to-store! embedding-model db-store]]
             [notebooks.preparation :refer [ds]]
+            [clojure.string :as str]
             [clj-http.client :as client]
             [scicloj.kindly.v4.kind :as kind]
             [tablecloth.api :as tc]
@@ -131,7 +132,7 @@
 
 (def llm-models
   [{:platform "Ollama" :name "Llama3.1" :parameters "8B" :model-ref "llama3.1" :model-type "local"}
-   {:platform "Ollama" :name "Llama3.1" :parameters "3B" :model-ref "llama3.2" :model-type "local"}
+   {:platform "Ollama" :name "Llama3.2" :parameters "3B" :model-ref "llama3.2" :model-type "local"}
    {:platform "Ollama" :name "Mistral" :parameters "7B" :model-ref "mistral" :model-type "local"}
    {:platform "Ollama" :name "LLaVa" :parameters "7B" :model-ref "llava" :model-type "local"}
    {:platform "Ollama" :name "Deepseek R1" :parameters "7B" :model-ref "deepseek-r1" :model-type "local"}
@@ -341,8 +342,6 @@
     (println (str add-to-store! " records added to db-store"))
     (spit "data/db-store-answers.json" (.serializeToJson db-store-answers))))
 
-
-
 (def db-store-answers (InMemoryEmbeddingStore/fromFile "data/db-store-answers.json"))
 
 ;; ### Similarity 'Score'
@@ -368,9 +367,10 @@
     (kind/pprint))
 
 ;; Adding the scores to all the data previously generated
-(def model-scores-q1 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-1))
+
 (def model-scores-testing (mapv #(add-similarity-scores % db-store-answers) testing-model-responses-question-1))
 (comment
+  (def model-scores-q1 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-1))
   (def model-scores-q2 (mapv #(add-similarity-scores % db-store-answers) model-responses-question-2))
   (def model-scores-q-test (mapv #(add-similarity-scores % db-store-answers) model-responses-question-test)))
 
@@ -422,7 +422,7 @@
 
 ;; Finally let's join all the question responses together and plot the best models
 
-(-> (sort-by :avg (concat model-scores-q1 [nonsense-response-scores]))
+(-> (sort-by :avg (concat model-scores-testing [nonsense-response-scores]))
     (box-plot-data-layout)
     (tc/dataset)
     (plotly/base {:=width 800 :=height 400})
@@ -436,6 +436,65 @@
 ;;
 ;; In the above comparisons, gemini 2 Flash seems to do quite well with this type of exercise. Let's try to insert that model as a
 ;; 'supervisor' for the other models, and see if it can help improve the answers.
+;;
+;;
+;; One approach to evaulating responses is to ask another LLM to 'judge' the
+;; responses. The advantages here is that LLMs are more aware of the reasoning
+;; behind how an answer may be structured and can therefore judge how good a
+;; response is more accurately than traditional methods. The downside is that
+;; there is a time/money cost to this approach.
+
+;; As an example, let's say we want to see if an LLM can detect a logical error in an answer.
+
+(def logical-problem-query "
+I will include some background information, a question, and an answer to that question.
+Please let me know if the answer to that question was derived from the background.
+
+Background:
+My name is Daniel.
+I live in Peru.
+I have three brothers.
+I have never seen Helsinki.
+
+Question:
+Have you seen New Delhi?
+
+Answer:
+No")
+
+;; From the given information, we can say that the provided answer **was not**
+;; derived from the background, since the background didn't include specific
+;; information about New Delhi. But, can the model detect this?
+
+(comment
+  (spit "data/logic/llama32.txt"
+        (ask-llm
+         {:model-ref "llama3.2"
+          :question logical-problem-query})))
+
+;; We can see with a very small model, Gemma 3, which only has 1 Billion
+;; parameters, that the model not only gets the answer wrong, but also
+;; doesn't seem to understand the question at all.
+(kind/md
+ (str "**Gemma 3**\n\n> "
+      (str/replace (slurp "data/logic/gemma3.txt")
+                   #"\n" "\n>")))
+
+;; In contrast a more higher-powered model like GPT-4o easily understands the
+;; problem.
+
+(kind/md
+ (str "**GPT 4o**\n\n> "
+      (slurp "data/logic/gpt-4o.txt")))
+
+;; The llama3.2 model, which is also quite small, also understands the problem,
+;; but adds its own speculations about possible linkagees outside the text.
+(kind/md
+ (str "**Llama 3.2**\n\n> "
+      (str/replace (slurp "data/logic/llama32.txt")
+                   #"\n" "\n>")))
+
+
 
 (defn ask-llm-supervisor-to-improve [{:keys [question response]}]
   (-> (client/post (str "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
@@ -553,14 +612,11 @@
       :showlegend false})
     (plotly/layer-line
      {:=y :max
-      :=mark-size 5})
-    (plotly/layer-point
-     {:=y :max
-      :=mark-size 5})
+      :=mark-size 5
+      :=name "Original Max"})
     (plotly/layer-line
-     {:=y :max-revised})
-    (plotly/layer-point
-     {:=y :max-revised}))
+     {:=y :max-revised
+      :=name "Revised Max"}))
 
 
 
