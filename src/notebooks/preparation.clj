@@ -70,6 +70,13 @@
 (defn clean-incomplete-answers [answer]
   (str/replace answer #"\{\{OMITTED.*element\}\}" ""))
 
+;; Some answers also contain the 'non-breaking space' character (ascii code
+;; 160), so we will try to replace these with spaces.
+
+(defn clean-nbs-answers [answer]
+  (str/replace answer #" " " "))
+
+
 ;; ### Duplicate questions
 
 ;; There are some questions that are duplicates. For example:
@@ -88,20 +95,34 @@
 ;; using tablecloth's unique-by function.
 
 
+;; TODO: notes on urls
 
+(defn extract-question-num [q] (re-find #"^\d+" q))
+(defn extract-question-id [q] (re-find #"(?<=\[).*(?=\])" q))
+
+(defn make-url [date q-num]
+  (let [url-base "https://www.oireachtas.ie/en/debates/question/"
+        url-default "https://www.oireachtas.ie/"]
+    (if (jt/< (jt/local-date date) (jt/local-date "2012-07-01"))
+      (str url-default)
+      (str url-base (str date) "/" q-num "/"))))
 
 ;; ## Build Prepared Dataset
 
-(defonce ds
+(def ds
   (-> datasource
       (tc/dataset {:key-fn keyword})
+      (tc/drop-missing :answer)
+      (tc/map-columns :q-num [:question] extract-question-num)
+      (tc/map-columns :q-id [:question] extract-question-id)
+      (tc/map-columns :url [:date :q-num] #(make-url %1 %2))
       (tc/map-columns :question [:question] clean-question)
       (tc/map-columns :topic [:topic] clean-topic-label)
       (tc/map-columns :department [:department] normalise-department-name)
       (tc/drop-missing :answer)
-      (tc/map-columns :answer [:answer] clean-incomplete-answers)
+      (tc/map-columns :answer [:answer] (comp clean-incomplete-answers clean-nbs-answers))
       (tc/unique-by :question)
-      (tc/select-columns [:date :question :answer :member :department :topic])))
+      (tc/select-columns [:date :question :answer :member :department :topic :url])))
 
 ;; ## General Stats
 
