@@ -1,43 +1,28 @@
 (ns notebooks.vdb-evaluation
-  (:require [clojure.set :as set]
+  (:require [clojure.edn :as edn]
             [notebooks.preparation :refer [ds]]
-            [notebooks.question-vdb :refer [add-question-to-store! db-store]]
+            [notebooks.question-vdb :refer [add-question-to-store! db-store query-db-store]]
+            [scicloj.kindly.v4.kind :as kind]
             [notebooks.tokenizer :as tokenizer]
             [scicloj.tableplot.v1.plotly :as plotly]
             [clojure.string :as str]
             [tablecloth.api :as tc])
-  (:import (dev.langchain4j.data.embedding Embedding)
+  (:import
    (dev.langchain4j.data.segment TextSegment)
-   (dev.langchain4j.model.embedding EmbeddingModel)
-   (dev.langchain4j.store.embedding EmbeddingMatch)
    (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
    (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
 
-;; ## Types of Metrics
-;; TODO: overview
-
-
-
-;; ## Chroma Evaulation
-
-;; Install the chroma repo:
-;; - !pip install git+https://github.com/brandonstarxel/chunking_evaluation.git
-
-
-
-;; Some factual data that is found within the store of answers
-(def highlights
-  ["On the 26 April 2023 the EU Commission published its proposal to revise the general pharmaceutical legislation"
-   "The ARP is paid at the rate of €800 per month per property with a unique Eircode."
-   "Between 01 January 2023 and 31 December 2023, 100% of the videos posted on the Department's social media channels included subtitles."
-   "Expressions of interests were received from over 900 primary schools in respect of 150,000 children and late last year these schools were invited to participate in the Hot School Meals Programme from April 2024."
-   "Child Benefit is a universal monthly payment made to families with children up to the age of 16 years."
-   "The Dental Treatment Services Scheme (DTSS) provides dental care, free of charge, to medical card holders aged 16 and over."])
 
 (comment
   ;; Interesting how many matches there are for this! Shows the duplication of language
   (filter #(re-find (re-pattern (str/join "|" highlights)) (second %))
           (map-indexed vector (remove nil? (:answer ds)))))
+
+;; ## Sample Answers and Questions
+;;
+;; For this exercise, we'll first create a small sample of answers
+;; ('highlights') and questions that we will use to test the performance of the
+;; retrieval method.
 
 
 (def highlights-answers
@@ -61,6 +46,49 @@
    "How is the government encouraging local authorities to apple for the town and village renewal scheme?"
    "What is the salary scale for an archaeologiest in the local government sector?"])
 
+;; At the moment, our approach is based on *searching for similar questions*,
+;; and then returning their answers.  However, this is a bit of a 'naive'
+;; approach. It is based on the concrete steps that are usually taken when trying to answer a new question:
+;;
+;; 1. Search for previous similar questions
+;;
+;; 2. Scan these answers for relevant info
+;;
+;; Why not just skip this step of searching through questions all together? The
+;; approach chosen here might depend on the actual application of a system like
+;; this. For example, would the intended use be to help administors prepare
+;; answers to new questions? In this case searching through previous questions
+;; might be more useful. If the intended use is something closer to 'general'
+;; retrieval of information, then the best approach might be to simply search
+;; through all previous answers for the info.
+;;
+;; In order to determine the most optimal approach, there are some metrics we
+;; could introduce to test the performance of different methods.
+;;
+;; As a starting point, let's see what kind of information the system we've
+;; built so far returns. We'll compare these responses to a more optimized
+;; approach at the end.
+
+(->
+ (query-db-store "What is the government doing to help improve GP services?" 5)
+ (tc/dataset)
+ (tc/map-columns :answer [:text] (fn [t] (-> ds
+                                             (tc/select-rows #(= t (:question %)))
+                                             :answer
+                                             first)))
+ (kind/table))
+
+;; As we can see, we do get some relevant information, but we also get some
+;; unhelpful information (like the first answer).
+;;
+;; Also, depending on how specific our question is, this is potentially
+;; way to much information, and could potentially confuse or mislead the LLM
+;; later on.
+;;
+;; To help improve this, let's first take a look at some common, simple metrics
+;; that are used to measure retrieval:
+
+;; [Description of the metrics]
 
 
 ;; Simply splits into sentences and group sentences by 'chunk size'
@@ -72,19 +100,6 @@
     chunks))
 
 
-
-
-(comment
-  (chunking-fn "
-The “walk in” was uttered with closed teeth, and expressed the sentiment, “Go to the Deuce!” even the gate over which he leant manifested no sympathising movement to the words; and I think that circumstance determined me to accept the invitation: I felt interested in a man who seemed more exaggeratedly reserved than myself.
-
-When he saw my horse’s breast fairly pushing the barrier, he did put out his hand to unchain it, and then sullenly preceded me up the causeway, calling, as we entered the court,—“Joseph, take Mr. Lockwood’s horse; and bring up some wine.”
-
-“Here we have the whole establishment of domestics, I suppose,” was the reflection suggested by this compound order. “No wonder the grass grows up between the flags, and cattle are the only hedge-cutters.”
-
-Joseph was an elderly, nay, an old man, very old, perhaps, though hale and sinewy. “The Lord help us!” he soliloquised in an undertone of peevish displeasure, while relieving me of my horse: looking, meantime, in my face so sourly that I charitably conjectured he must have need of divine aid to digest his dinner, and his pious ejaculation had no reference to my unexpected advent. "
-               3))
-
 (def embedding-model (AllMiniLmL6V2EmbeddingModel/new))
 
 (defn chunked-docs [docs chunking-size]
@@ -92,7 +107,8 @@ Joseph was an elderly, nay, an old man, very old, perhaps, though hale and sinew
        (remove empty?)
        (reduce into)))
 
-;; TODO: add ability to use openai embeddings
+
+;; TODO: add ability to use openai embeddings and test with openai embeddings
 
 (defn generate-metrics [highlights chunked-docs & label]
   (let [db-store     (InMemoryEmbeddingStore/new)
@@ -125,7 +141,6 @@ Joseph was an elderly, nay, an old man, very old, perhaps, though hale and sinew
             corresponding-ans (->> (tc/select-rows ds #(some #{(:question %)} q-matches))
                                   :answer
                                   (str/join " "))]
-        (println corresponding-ans)
         (recur (inc idx) (conj res (tokenizer/calculate-retrieval-metrics
                                     (nth highlights idx)
                                     corresponding-ans
@@ -133,22 +148,29 @@ Joseph was an elderly, nay, an old man, very old, perhaps, though hale and sinew
                                     "Question Method")))))))
 
 
-(defonce met-comparisons
-  (let [hls highlights-answers
-        docs (-> ds
-                 (tc/drop-missing :answer)
-                 (tc/drop-rows #(re-find #"details supplied" (% :question)))
-                 (tc/drop-rows #(re-find #"As this is a service matter" (% :answer)))
-                 (tc/select-rows (range 500))
-                 :answer)
-        full-docs-benchmark (generate-metrics hls docs "Full Docs")]
-    (loop [[x & xs] [3 5 10 15]
-           result []]
-      (if-not x
-        (conj result full-docs-benchmark)
-        (let [chunked-docs (chunked-docs docs x)]
-          (recur xs
+(comment
+  (def met-comparisons
+    (let [hls highlights-answers
+          docs (-> ds
+                   (tc/drop-missing :answer)
+                   (tc/drop-rows #(re-find #"details supplied" (% :question)))
+                   (tc/drop-rows #(re-find #"As this is a service matter" (% :answer)))
+                   :answer)
+          full-docs-benchmark (generate-metrics hls docs "Full Docs")]
+      (loop [[x & xs] [3 5 10 15]
+             result []]
+        (if-not x
+          (conj result full-docs-benchmark)
+          (let [chunked-docs (chunked-docs docs x)]
+            (recur xs
                  (conj result (generate-metrics hls chunked-docs (str x " Chunks")))))))))
+
+  (spit "data/metrics_retrieval_data.edn" (into (reduce into met-comparisons)
+                                                (generate-metrics-question-retrieval-method highlights-answers highlights-questions))))
+
+(def comparison-data (edn/read-string (slurp "data/metrics_retrieval_data.edn")))
+
+(kind/table comparison-data)
 
 (defn average [coll]
   (float
@@ -159,7 +181,7 @@ Joseph was an elderly, nay, an old man, very old, perhaps, though hale and sinew
 
 (def temp-ds
   (->
-   (tc/dataset (into (reduce into met-comparisons) (generate-metrics-question-retrieval-method highlights-answers highlights-questions)))
+   (tc/dataset comparison-data)
    (tc/group-by [:label])
    (tc/aggregate {:avg-recall #(average (% :recall))
                   :avg-precision #(average (% :precision))
@@ -179,3 +201,69 @@ Joseph was an elderly, nay, an old man, very old, perhaps, though hale and sinew
     (plotly/layer-line
      {:=x :label
       :=y :avg-IoU}))
+
+;; In the graphs above, the results for 'recall' are very surprising. Generally,
+;; you would expect recall to go up with longer chunks of text (i.e., there
+;; would be more likihood of capturing the highlighted text). A major caveat
+;; here is that these would need to be run on a much larger test dataset to get
+;; something a bit more tangible.
+;;
+;; For now, let's just be happy that these results point to a clear optimum
+;; retrieval strategy for this dataset - splitting the answers into 3-sentence
+;; chuncks results in both high recall and relatively high precision.
+
+;; Based on the above, let's try to generate context using a chunking method
+;; that divides the answer text into chunks of three sentences.
+
+(comment
+  (let [answers (-> ds
+                    (tc/drop-missing :answer)
+                    (tc/drop-rows #(re-find #"details supplied" (% :question)))
+                    (tc/drop-rows #(re-find #"As this is a service matter" (% :answer)))
+                    :answer)
+
+        docs (chunked-docs answers 3)
+        db-store (InMemoryEmbeddingStore/new)
+        _c (count (mapv #(add-question-to-store! % db-store) docs))]
+    (println _c)
+    (spit "data/retrieval_store/store.json" (.serializeToJson db-store))))
+
+(def db-store-chunked-answers (InMemoryEmbeddingStore/fromFile "data/retrieval_store/store.json"))
+
+
+(defn generate-context [question]
+  (let [emb-question (.content (. embedding-model embed question))
+        related-docs (. db-store-chunked-answers findRelevant emb-question 5)]
+    (map (fn [doc]
+           {:text (.text (.embedded doc))
+            :score (.score doc)})
+         related-docs)))
+
+(kind/table
+ (generate-context "What is the government doing to help improve GP services?"))
+
+;; These answers are not a bad starting point for answering this kind of broad
+;; question. You can see some duplication in the answers, which, if this were to
+;; be optimized further should be removed from the database to improve results further.
+;; 
+;; Looking at the first answer in the table above, the figure of '211m EUR' is
+;; referenced in relation to the 2019 GP Agreement. Let's see if the database
+;; can match this exact figure:
+
+(kind/table
+ (generate-context "How much annual investment was provided under the 2019 GP agreement?"))
+
+;; Every document retrieved seems to contain the relevant figure :)
+;;
+;; For completness, let's try this same, more specific, question with the
+;; previous approach. As you can see below It's much less focused! 
+
+
+(->
+ (query-db-store "How much annual investment was provided under the 2019 GP agreement" 5)
+ (tc/dataset)
+ (tc/map-columns :answer [:text] (fn [t] (-> ds
+                                             (tc/select-rows #(= t (:question %)))
+                                             :answer
+                                             first)))
+ (kind/table))
