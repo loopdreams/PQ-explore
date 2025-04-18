@@ -23,24 +23,28 @@
 ;;
 ;; Before passing, the question to the prompt generator, we will re-use the function in the last section to generate the context.
 
-(defn retrieve-context [question]
-  (let [related-docs (mapv :text (vdb/generate-context question))]
-    (str/join "\n\n" related-docs)))
 
-(defn generate-prompt [question]
-  (let [retrieved-context (retrieve-context question)]
-    (str "I want you to act as a responsible and trustworthy senior government official.
+(defn add-context [{:keys [question] :as rag-data}]
+  (let [ctx (mapv :text (vdb/generate-context question))]
+    (assoc rag-data :retrieved-context ctx)))
+
+(defn add-pq-prompt [{:keys [retrieved-context] :as rag-data}]
+  (assoc rag-data :system-prompt
+         (str "I want you to act as a responsible and trustworthy senior government official.
 Please provide an answer to a citizen's question, using only the context provided.
 Answer as if you are talking directly to the citizen and be neutral and formal as possible.
 If you can't find a specific detail from the question, please acknowledge this and provide any
 other helpful information that may be related to the question.
 If you can't find sufficient information in the context to answer the question at all,
 then reply with \"I am unable to answer this question with the information I have available.\""
-         "\n\n CONTEXT: " retrieved-context)))
+              "\n\n CONTEXT: " (str/join "\n\n" retrieved-context))))
 
 
 (kind/md
- (generate-prompt sample-question))
+ (-> {:question sample-question}
+     add-context
+     add-pq-prompt
+     :system-prompt))
 
 
 ;; Now that we have a way to generate a prompt, let's pass it to an LLM.
@@ -49,13 +53,22 @@ then reply with \"I am unable to answer this question with the information I hav
 
 (kind/table llm/llm-models)
 
+(defn add-llm-response [{:keys [model-ref question system-prompt] :as rag-data}]
+  (let [answer (llm/ask-llm
+                {:model-ref model-ref
+                 :question question
+                 :system-prompt system-prompt})]
+    (assoc rag-data :answer answer)))
 
 (comment
-  (kind/md
-   (llm/ask-llm
-    {:question sample-question
-     :system-prompt (generate-prompt sample-question)
-     :model-ref "llama3.2"})))
+  (-> {:question sample-question
+       :model-ref "llama3.2"}
+      add-context
+      add-pq-prompt
+      add-llm-response
+      :answer
+      kind/md))
+
 
 
 ;; Let's try a few additional initial tests:
@@ -64,17 +77,27 @@ then reply with \"I am unable to answer this question with the information I hav
 (def sample-question-detail "What is the government doing to support GPs in Limerick city?")
 
 (comment
-  (kind/md
-   (llm/ask-llm
-    {:question sample-question-broad
-     :system-prompt (generate-prompt sample-question-broad)
-     :model-ref "llama3.2"}))
+  (-> {:question sample-question-broad
+       :model-ref "llama3.2"}
+      add-context
+      add-pq-prompt
+      add-llm-response
+      :answer
+      kind/md)
 
-  (kind/md
-   (llm/ask-llm
-    {:question sample-question-detail
-     :system-prompt (generate-prompt sample-question-detail)
-     :model-ref "llama3.2"})))
+  (-> {:question sample-question-detail
+       :model-ref "llama3.2"}
+      add-context
+      add-pq-prompt
+      add-llm-response
+      :answer
+      kind/md))
+
+;; Putting these together into single function:
+
+(defn make-rag-data [rag-data]
+  (-> rag-data add-context add-pq-prompt add-llm-response))
+
 
 
 ;; As an added feature, we could use the original dataset to try provide a reference for the question.
@@ -92,15 +115,14 @@ then reply with \"I am unable to answer this question with the information I hav
        (str/join "\n\n- "
                  links)))
 
-(defn generate-answer-with-references [llm-config]
-  (let [context-docs (mapv :text (vdb/generate-context (:question llm-config)))
-        docs-links (format-links-md (mapv get-reference-link-for-doc context-docs))
-        llm-response (llm/ask-llm llm-config)]
-    (str llm-response "\n\n" docs-links)))
+(defn generate-answer-with-references [rag-data]
+  (let [rag-data (make-rag-data rag-data)
+        ctx-docs (:retrieved-context rag-data)
+        docs-ref-links (format-links-md (mapv get-reference-link-for-doc ctx-docs))]
+    (str (:answer rag-data) "\n\n" docs-ref-links)))
 
 (comment
-  (kind/md
-   (generate-answer-with-references
-    {:question sample-question-broad
-     :system-prompt (generate-prompt sample-question-broad)
-     :model-ref "llama3.2"})))
+  (-> {:question sample-question-broad
+       :model-ref "llama3.2"}
+      generate-answer-with-references
+      kind/md))

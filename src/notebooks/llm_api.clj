@@ -115,6 +115,11 @@
 
 ;; A wrapper function to check which api to use
 ;; TODO: add in system prompt as option
+;;
+;; usage:
+;; {:model-ref "model"
+;;  :question "question"
+;;  :system-prompt "prompt"}
 (defn ask-llm [{:keys [model-ref] :as params}]
   (let [get-models (fn [platform] (->>  llm-models
                                         (filterv #(= (:platform %) platform))
