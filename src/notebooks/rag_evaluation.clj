@@ -1,6 +1,6 @@
 (ns notebooks.rag-evaluation
   (:require [libpython-clj2.require :refer [require-python]]
-            [libpython-clj2.python :refer [py.] :as py]
+            [libpython-clj2.python :refer [py..] :as py]
             [notebooks.preparation :refer [ds]]
             [selmer.parser :as templates]
             [scicloj.kindly.v4.kind :as kind]
@@ -12,6 +12,21 @@
             [tablecloth.api :as tc]
             [clojure.java.io :as io]))
 
+
+;; **NOTE!**
+;; This section uses clojure-python interop. In order for it to load properly,
+;; you'll have to set up libpython-clj2 with your editor and install the
+;; relevant python dependencies seperately.
+;;
+;; TODO: test this with a fresh clone of repo
+;; In terms of the python dependencies, the follow should be all that is needed:
+;;
+;; `python3 -m pip install continuous-eval`
+;;
+;; In my case, I set up a python virtual environment to install this, and then created
+;; a file under 'dev/user.clj' file that is automatically run by emacs/cider when starting a REPL.
+;; Inside this file is just the 'initialize!' function provided by libpython-clj2.python namespace,
+;; which takes a path to a :python-executable and a :library-path
 
 ;; Install:
 ;; - python3 -m pip install continuous-eval
@@ -34,16 +49,67 @@
 ;;  - BertAnswerSimilarity
 ;;  - DebertaAnswerScores
 
+;; # Rag Evaluation
+;;
+;; ## Overview
+;; For this section, I will be relying heavily on the [continuous-eval (python)](https://github.com/relari-ai/continuous-eval)
+;; metrics and approach for starting to think about how to evaluate the RAG.
+;;
+;; That repo also has some great links to articles explaining some of the
+;; concepts in more detail.
+;;
+;; As the creators of the project write, there are several kinds of questions
+;; you might want to consider when evaluating answer generation:
+;;
+;; - Do I have to use GPT-4 or would a smaller model work too?
+;;
+;; - Should I fine-tune an LLM for my RAG application?
+;;
+;; - Which prompts minimize hallucination the most?
+;;
+;; - How sensitive are answers to different prompts?
+;;
+;; - Is the LLM already good enough if I provide the right contexts, and should I focus on improving Retrieval instead?
 
-;; ## Generating/Saving LLM responses for evaluation
+;; ([source](https://blog.relari.ai/a-practical-guide-to-rag-evaluation-part-2-generation-c79b1bde0f5d))
+;;
+;; In this exercises, I will only really look at the question of what llm
+;; *model* might work best with the data that I have and the prompt/retrieval
+;; framework we have already set up.
+;;
+;; We will focus on two categories of metric:
+;;
+;; - Deterministic
+;;
+;; - LLM-based
+;;
+;; Deterministic metrics are similar to how we measured the retrieval
+;; performace; they simple measure the *token overlap* between answers generated
+;; by the LLM and some kind of reference/ground-truth answers.
+;;
+;; LLM-based metrics utilise another LLM to assign a score to the output. For
+;; example, to determine 'answer-correctness', we will ask an LLM to assign a
+;; score between 1-5 to a generated answer, based on reference answers that we
+;; provide ourselves.
+;;
+;; Before going into the metrics further, we will first create:
+;;
+;; - A testing dataset, contining some questions and ground truth answers
+;;
+;; - Some generated LLM responses by different models, using the questions from
+;;   the testing dataset
+;;
+;; For the testing dataset, I've used 10 fairly random questions based on some
+;; of the material in the starting dataset of questions and answers. It is saved
+;; in a 'questions.edn' file in this project.
+;;
+;; Ideally, we would use a much larger and more thoughfully curated evaluation
+;; dataset, perhaps with input from domain experts across different question areas.
+;; The goal here, however, is simply to test out some evaluation workflows in
+;; clojure, so a basic evaluation dataset will have to do for now. Below, we
+;; just load that dataset. The 'questions.edn' file is set up as a clojure map,
+;; where the questions are keys and the ground truth answers and values.
 
-
-(defn ask-llm-save-responses! [model questions]
-  (let [responses (reduce (fn [res question]
-                            (conj res (gen/make-rag-data (assoc question :model-ref model))))
-                          [] questions)
-        f-name (str "data/responses/" model "_responses.edn")]
-    (spit f-name responses)))
 
 (def evaluation-dataset
   (let [data         (edn/read-string (slurp "data/evaluation_questions/questions.edn"))
@@ -55,11 +121,69 @@
           questions
           ground-truth)))
 
+(kind/table evaluation-dataset)
+
+;; Next, we will write a helper function to save llm responses and generate some
+;; responses by different llm models.
+
+(defn ask-llm-save-responses! [model questions]
+  (let [responses (reduce (fn [res question]
+                            (conj res (gen/make-rag-data (assoc question :model-ref model))))
+                          [] questions)
+        f-name (str "data/responses/" model "_responses.edn")]
+    (spit f-name responses)))
+
+
 (comment
-  (ask-llm-save-responses! "gemini-2.0-flash-lite" evaluation-dataset))
+  (ask-llm-save-responses! "gemini-2.0-flash-lite" evaluation-dataset)
+  (ask-llm-save-responses! "llama3.1" evaluation-dataset)
+  (ask-llm-save-responses! "gpt-3.5-turbo" evaluation-dataset)
+  (ask-llm-save-responses! "gemma3:1b" evaluation-dataset))
+
+(def responses-ds
+  (let [responses-dir "data/responses"
+        responses (->> responses-dir
+                       (io/file)
+                       file-seq
+                       rest
+                       (map (comp edn/read-string slurp))
+                       (reduce into))]
+    (tc/dataset responses)))
+
+(tc/row-count responses-ds)
+
+;; ## Continuous Eval Metrics Functions
+;;
+;; Below, I am just creating a wrapper for the Continuous-eval deterministic
+;; metrics, and re-writing the LLM metrics in clojure, using the
+;; [prompt templates that are provided in the continuous-eval repo](https://github.com/relari-ai/continuous-eval/tree/main/continuous_eval/metrics/generation/text/prompts)
+;;
+;; For demonstrating how the metrics work, we will use a couple of the generated responses as samples.
+;;
+;; For the question "How many households were in reciept of HAP payments in
+;; 2023?", the data available states that 57,617 households were in receipt of
+;; payments at the end of **Q3 2023**. In other words, the full data for 2023
+;; was not available at that time. Most of the models seemed to be able to pick
+;; up that detail, but one of the lower-powered ones, gemma3(1 billion param
+;; model) didn't qualify the figure to state that it was only for Q3.
+;;
+;; Also, the question "Are there plans to further reduce public transport fares?"
+;; should be a simple 'no', based on the available data, but the gemma3:1b model
+;; also gets this one wrong.
+
+(def sample-gen-responses
+  (-> responses-ds
+      (tc/select-rows #(and (or (= (:model-ref %) "llama3.1")
+                                (= (:model-ref %) "gemma3:1b"))
+                            (or (re-find #"receipt of HAP payments" (:question %))
+                                (re-find #"transport fares" (:question %)))))))
+
+(-> sample-gen-responses
+    (tc/select-columns [:model-ref :question :answer])
+    (kind/table))
 
 
-;; ## Continuous Eval Metrics
+;
 ;; ### Deterministic Metrics
 
 (require-python '[continuous_eval.metrics.generation.text.deterministic :as det])
@@ -94,6 +218,26 @@
        "token_overlap_precision"     :token-overlap-precision
        "token_overlap_recall"        :token-overlap-recall
        "token_overlap_faithfulness"  :token-overlap-faithfulness}))))
+
+;; Example score for the sample responses:
+
+(-> (mapv add-deterministic-metrics (tc/rows sample-gen-responses :as-maps))
+    (tc/dataset)
+    (tc/select-columns [:model-ref :question :answer :rouge-1-f1 :token-overlap-f1 :bleu-score])
+    (kind/table))
+
+;; The 'F1' scores are the combination of 'precision' and 'recall' metrics. As
+;; we saw in previous sections, precision is how much of the generated asnwer is
+;; reflected in the ground truth (i.e., what % of the generated answer is
+;; 'superfluous'), and recall is how much of the ground truth is reflected in
+;; the generated answer. The F1 score is the harmonic mean of both these scores,
+;; with a score closer to 1 being better. The 'BLEU' score is also better when
+;; it is closer to 1
+;;
+;; In this case, even though these metrics don't check for semantic meaning or
+;; logic, the metrics do indicate that the llama3.1 responses were slightly
+;; better than the gemma3 responses.
+
 
 ;; ### LLM Metrics
 
@@ -162,6 +306,45 @@
               (add-llm-metrics model)))
         responses))
 
+(comment
+  (let [eval-model "gpt-4o"
+        output-fname "data/evaluation_example/example.edn"
+        sample-with-metrics (add-all-evaluation-metrics
+                             (tc/rows sample-gen-responses :as-maps)
+                             eval-model)]
+    (spit output-fname sample-with-metrics)))
+
+(def sample-gen-responses-metrics (edn/read-string (slurp "data/evaluation_example/example.edn")))
+
+(first sample-gen-responses-metrics)
+
+;; Example LLM Faithfulness evaluation (score can be '1 - faithfull' or '0 - not faithfull'):
+(-> sample-gen-responses-metrics
+    (tc/dataset)
+    (tc/select-columns [:model-ref :question :answer :metric-llm-faithfulness-score :metric-llm-faithfulness-explanation])
+    (kind/table))
+
+;; Example LLM Correctness evaluation (range between 1 and 5):
+
+(-> sample-gen-responses-metrics
+    (tc/dataset)
+    (tc/select-columns [:model-ref :question :answer :metric-llm-correctness-score :metric-llm-correctness-explanation])
+    (kind/table))
+
+;; Example LLM Relevance evaluation (range between 1 and 3):
+
+(-> sample-gen-responses-metrics
+    (tc/dataset)
+    (tc/select-columns [:model-ref :question :answer :metric-llm-relevance-score :metric-llm-relevance-explanation])
+    (kind/table))
+
+;; Interestingly, even though the gemma3 responses were factually incorrect,
+;; they still received a high 'relevance' score from the evaluator model. In
+;; other words, it recognises that it was still attempting to answer the
+;; question in a 'relevant' manner, even though it got the facts wrong.
+
+;; ### Running/Saving evaluations
+
 (defn run-and-save-evaluation-metrics! [responses model]
   (let [model-ref (:model-ref (first responses))
         f-name (str "data/responses_evaluation/" model-ref "_evaluation.edn")
@@ -177,14 +360,6 @@
 
 (comment
   (run-and-save-all-evals! "data/responses" "gpt-3.5-turbo"))
-
-(defonce sample-metrics-2
-  (add-all-evaluation-metrics (edn/read-string (slurp "data/responses/llama3.2_responses.edn"))
-                              "llama3.2"))
-
-(defonce sample-metrics-3
-  (add-all-evaluation-metrics (edn/read-string (slurp "data/responses/gemini-2.0-flash-lite_responses.edn"))
-                              "llama3.2"))
 
 
 (defn average [coll]
@@ -238,7 +413,7 @@
 (defn make-boxplot [metric]
   (->
    (build-responses-eval-ds-all "data/responses_evaluation")
-   (tc/order-by metric)
+   (tc/order-by :model-ref)
    (plotly/layer-boxplot
     {:=x :model-ref
      :=y metric})))
@@ -280,16 +455,24 @@ baseline-grade-level
 ;; ### LLM Generated Metrics
 ;; #### Faithfulness
 
-(make-boxplot :metric-llm-faithfulness-score)
+(defn make-bar-avgs [metric]
+  (->
+   (build-responses-eval-ds-avgs "data/responses_evaluation")
+   (tc/order-by metric)
+   (plotly/layer-bar
+    {:=x :model-ref
+     :=y metric})))
+
+(make-bar-avgs :metric-llm-faithfulness-score)
 
 
 ;; #### Correctness
 
-(make-boxplot :metric-llm-correctness-score)
+(make-bar-avgs :metric-llm-correctness-score)
 
 ;; #### Relevance
 
-(make-boxplot :metric-llm-relevance-score)
+(make-bar-avgs :metric-llm-relevance-score)
 
 
 
