@@ -1,0 +1,8 @@
+Question: {{question}}
+Ground truth answers:
+{% for el in ground-truth %}
+{{el}}
+{% endfor %}
+Generated answer: {{answer}}
+
+Evaluation:

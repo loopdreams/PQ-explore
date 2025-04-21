@@ -1,0 +1,6 @@
+Context:
+```
+{{retrieved-context-joined}}
+```
+
+Statement: {{answer}}
