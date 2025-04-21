@@ -9,7 +9,9 @@
    :source-path ["index.clj"
                  "notebooks/preparation.clj"
                  "notebooks/question_vdb.clj"
-                 "notebooks/rag.clj"]
+                 "notebooks/vdb_evaluation.clj"
+                 "notebooks/generation.clj"
+                 "notebooks/rag_evaluation.clj"]
    :clean-up-target-dir true})
 
 (defn make-book [_] (clay/make! book-spec))
