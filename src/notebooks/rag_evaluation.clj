@@ -74,7 +74,7 @@
 ;; ([source](https://blog.relari.ai/a-practical-guide-to-rag-evaluation-part-2-generation-c79b1bde0f5d))
 ;;
 ;; In this exercises, I will only really look at the question of what llm
-;; *model* might work best with the data that I have and the prompt/retrieval
+;; **model** might work best with the data that I have and the prompt/retrieval
 ;; framework we have already set up.
 ;;
 ;; We will focus on two categories of metric:
@@ -128,7 +128,7 @@
 
 (defn ask-llm-save-responses! [model questions]
   (let [responses (reduce (fn [res question]
-                            (conj res (gen/make-rag-data (assoc question :model-ref model))))
+                            (conj res (gen/get-rag-answer (assoc question :model-ref model))))
                           [] questions)
         f-name (str "data/responses/" model "_responses.edn")]
     (spit f-name responses)))
@@ -138,7 +138,23 @@
   (ask-llm-save-responses! "gemini-2.0-flash-lite" evaluation-dataset)
   (ask-llm-save-responses! "llama3.1" evaluation-dataset)
   (ask-llm-save-responses! "gpt-3.5-turbo" evaluation-dataset)
-  (ask-llm-save-responses! "gemma3:1b" evaluation-dataset))
+  (ask-llm-save-responses! "gemma3:1b" evaluation-dataset)
+  (ask-llm-save-responses! "gpt-4o-mini" evaluation-dataset)
+  (ask-llm-save-responses! "gpt-4o" evaluation-dataset)
+  (ask-llm-save-responses! "o4-mini-2025-04-16" evaluation-dataset)
+  (ask-llm-save-responses! "o3-mini" evaluation-dataset)
+  (ask-llm-save-responses! "gemini-2.0-flash" evaluation-dataset)
+  (ask-llm-save-responses! "claude-3-7-sonnet-20250219" evaluation-dataset)
+  (ask-llm-save-responses! "claude-3-5-haiku-20241022" evaluation-dataset)
+  (ask-llm-save-responses! "claude-3-haiku-20240307" evaluation-dataset)
+  (ask-llm-save-responses! "llama3.2" evaluation-dataset)
+  (ask-llm-save-responses! "mistral" evaluation-dataset)
+  (ask-llm-save-responses! "llava" evaluation-dataset)
+  (ask-llm-save-responses! "deepseek-r1" evaluation-dataset)
+  (ask-llm-save-responses! "gemma3:4b" evaluation-dataset)
+  (ask-llm-save-responses! "granite3.2" evaluation-dataset)
+  (ask-llm-save-responses! "gemini-2.5-pro-preview-03-25" evaluation-dataset)
+  (ask-llm-save-responses! "gemini-2.5-flash-preview-04-17" evaluation-dataset))
 
 (def responses-ds
   (let [responses-dir "data/responses"
@@ -359,7 +375,9 @@
     (mapv #(run-and-save-evaluation-metrics! % model) responses)))
 
 (comment
-  (run-and-save-all-evals! "data/responses" "gpt-3.5-turbo"))
+  ;; 43:55 (very roughly) to run around 15
+  ;; cost - around 1.44 USD for 18 models * 10 questions each - 180 evaluations
+  (run-and-save-all-evals! "data/responses" "o4-mini-2025-04-16"))
 
 
 (defn average [coll]
@@ -395,13 +413,16 @@
 (kind/table
  (build-responses-eval-ds-avgs "data/responses_evaluation"))
 
-(defn build-responses-eval-ds-all [responses-eval-dir]
+(defn concat-responses-eval-data [responses-eval-dir]
   (let [responses (->> responses-eval-dir
                        io/file
                        file-seq
                        rest
-                       (mapv (comp edn/read-string slurp)))
-        ds (tc/dataset (reduce into responses))]
+                       (mapv (comp edn/read-string slurp)))]
+    (reduce into responses)))
+
+(defn concat-responses-eval-ds-narrowed [responses-eval-dir]
+  (let [ds (tc/dataset (concat-responses-eval-data responses-eval-dir))]
     (-> ds
         (tc/select-columns
          (concat
@@ -410,9 +431,12 @@
 
 ;; ## Comparing the Metrics
 
+(def responses-eval-data (concat-responses-eval-data "data/responses_evaluation"))
+(def responses-eval-ds-narrowed (concat-responses-eval-ds-narrowed "data/responses_evaluation"))
+
 (defn make-boxplot [metric]
   (->
-   (build-responses-eval-ds-all "data/responses_evaluation")
+   responses-eval-ds-narrowed
    (tc/order-by :model-ref)
    (plotly/layer-boxplot
     {:=x :model-ref
@@ -451,6 +475,119 @@ baseline-grade-level
 
 (make-boxplot :flesch-kincaid-grade-level)
 
+;; Example of max/min reading ease answers
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:flesch-reading-ease :answer])
+    (tc/order-by :flesch-reading-ease)
+    (tc/select-rows (range 1)))
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:flesch-reading-ease :answer])
+    (tc/order-by :flesch-reading-ease :desc)
+    (tc/select-rows (range 1)))
+
+;; Let's try a high reading-ease answer with more than 100 words...
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:flesch-reading-ease :answer])
+    (tc/map-columns :wc [:answer] (fn [ans]
+                                    (-> (str/split ans #"\w+")
+                                        (count))))
+    (tc/select-rows #(> (:wc %) 100))
+    (tc/order-by :flesch-reading-ease :desc)
+    (tc/select-rows (range 1)))
+
+
+;; #### Precision
+
+(def precision-grouped-by-question
+  (-> responses-eval-ds-narrowed
+      (tc/select-columns [:question :model-ref :rouge-1-precision :token-overlap-precision])
+      (tc/group-by :question)
+      :data))
+
+
+
+(defn graph-group [ds key]
+  (-> (tc/order-by ds key)
+      (plotly/base
+       {:=x :model-ref
+        :=title (first (:question ds))})
+      (plotly/layer-line
+       {:=y key})
+      (plotly/layer-line
+       {:=y :token-overlap-precision})))
+
+(map #(graph-group % :rouge-1-precision) precision-grouped-by-question)
+
+
+;; Recall
+
+(def recall-grouped
+  (-> responses-eval-ds-narrowed
+      (tc/select-columns [:question :model-ref :rouge-l-recall :token-overlap-recall])
+      (tc/group-by :question)
+      :data))
+
+(map (fn [ds]
+       (->
+        (tc/order-by ds :rouge-l-recall)
+        (plotly/base
+         {:=x :model-ref
+          :=title (first (:question ds))
+          :=width 800})
+        (plotly/layer-line
+         {:=y :rouge-l-recall})
+        (plotly/layer-line
+         {:=y :token-overlap-recall})))
+     recall-grouped)
+
+;; Precision/Recall
+
+(def multiple-grouped
+  (-> responses-eval-ds-narrowed
+      (tc/order-by :model-ref)
+      (tc/group-by :question)
+      :data))
+
+(map (fn [ds]
+       (-> ds
+           (plotly/base
+            {:=x :model-ref
+             :=title (first (:question ds))
+             :=width 800})
+           (plotly/layer-bar
+            {:=y :bleu-score})
+           (plotly/layer-bar
+            {:=y :rouge-1-f1})
+           (plotly/layer-bar
+            {:=y :token-overlap-f1})))
+     multiple-grouped)
+
+(defn add-model-detail [ds detail]
+  (-> ds
+      (tc/map-columns detail [:model-ref]
+                      (fn [m]
+                        (->
+                         (filter (fn [m1] (= m (:model-ref m1))) llm/llm-models)
+                         first
+                         detail)))))
+
+(->
+ (build-responses-eval-ds-avgs "data/responses_evaluation")
+ (add-model-detail :platform)
+ (tc/order-by :rouge-1-f1)
+ (plotly/base
+  {:=width 800})
+ (plotly/layer-bar
+  {:=x :model-ref
+   :=y :rouge-1-f1
+   :=color :platform}))
+
 
 ;; ### LLM Generated Metrics
 ;; #### Faithfulness
@@ -474,6 +611,20 @@ baseline-grade-level
 
 (make-bar-avgs :metric-llm-relevance-score)
 
+
+;; #### Single Model Scores
+
+;; Matrix:
+;;              Score | Average (all models) |
+;; Recall     |
+;; Precision
+;; Faithfulness
+;; Correctness
+;; Relevance
+;;
+;; TODO: calculate baseline averages
+;; - across score
+;; - per question
 
 
 ;; ### 'Overall' Rating
