@@ -197,6 +197,9 @@
 ;; - International Protection
 ;;
 ;; - Health Services
+;;
+;; In theory, questions relating to these topics should be close to one another
+;; within the embedding space.
 
 (def ds-schools-immigration-health
   (-> ds
@@ -286,85 +289,18 @@
 ;; visualisation.
 
 
+;; ### Visualising Question Retrieval
 
-;; ### Ploting a Department's question-set
-
-;; Filtering for topics that have more than 20 questions associated
-(def dep-justice-target-topics
-  (-> ds
-      (tc/select-rows #(= (:department %) "Justice"))
-      (tc/group-by [:topic])
-      (tc/aggregate {:n-questions tc/row-count})
-      (tc/select-rows #(> (:n-questions %) 20))
-      :topic))
-
-
-(def ds-department-justice
-  (-> ds
-      (tc/select-rows #(= (:department %) "Justice"))
-      (tc/select-rows #(some #{(:topic %)} dep-justice-target-topics))
-      (tc/select-columns [:question :topic])
-      (tc/map-columns :embedding [:question] (fn [q]
-                                               (->> (TextSegment/from q)
-                                                    (. embedding-model embed)
-                                                    (.content)
-                                                    (.vector)
-                                                    vec)))))
-
-(plot-t-sne-coords ds-department-justice
-                   (:topic ds-department-justice)
-                   {:perplexity 10
-                    :iterations 5000}
-                   {:=color :label})
-
-
-(def dep-children-target-topics
-  (-> ds
-      (tc/select-rows #(= (:department %) "Children"))
-      (tc/group-by [:topic])
-      (tc/aggregate {:n-questions tc/row-count})
-      (tc/select-rows #(> (:n-questions %) 20))
-      :topic))
-
-
-(def ds-department-children
-  (-> ds
-      (tc/select-rows #(= (:department %) "Children"))
-      (tc/select-rows #(some #{(:topic %)} dep-children-target-topics))
-      (tc/select-columns [:question :topic])
-      (tc/map-columns :embedding [:question] (fn [q]
-                                               (->> (TextSegment/from q)
-                                                    (. embedding-model embed)
-                                                    (.content)
-                                                    (.vector)
-                                                    vec)))))
-
-(plot-t-sne-coords ds-department-children
-                   (:topic ds-department-children)
-                   {:perplexity 10
-                    :iterations 2000}
-                   {:=color :label})
-
-
-
-
-
-;; ### Visualise a question and the selected matching questions (neighbours)
+;; For this exercise we'll use a smaller subset of the questions.
 
 (def ds-subset
   (-> ds
       (tc/select-rows (range 1000))))
 
-(-> ds-subset
-    (tc/group-by [:topic])
-    (tc/aggregate tc/row-count)
-    (tc/order-by "summary" :desc)
-    (tc/select-rows (range 5)))
-
-;; Of these first 1,000 questions, it seems like there are 25 questions relating
-;; to "Housing Schemes", so our test question will be along those lines.
 
 (def sample-question "The Deputy asks the Minister a question about the number of vacant houses")
+
+;; Next we'll create a temporary store for these questions, and add them to it.
 
 (def questions-subset-store (InMemoryEmbeddingStore/new))
 
@@ -408,7 +344,6 @@
 
 ;; Finally, we will add the embeddings to the questions.
 
-;; TODO: this fn to add embeddings is re-used a lot. Refactor
 (def ds-subset-labelled-embeddings
   (tc/map-columns ds-subset-labelled
                   :embedding [:question]
@@ -418,14 +353,6 @@
                          (.content)
                          (.vector)
                          vec))))
-
-
-
-(plot-t-sne-coords ds-subset-labelled-embeddings
-                   (:label ds-subset-labelled-embeddings)
-                   {}
-                   {:=color :label
-                    :=mark-opacity 0.6})
 
 
 (def q-test-ds
