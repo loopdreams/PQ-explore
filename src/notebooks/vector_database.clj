@@ -10,13 +10,11 @@
            (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)
            (smile.manifold TSNE)))
 
-;; ## Introduction
-;;
 ;; In this section we will:
 ;;
 ;; 1. Build an in-memory vector database using langchain4j
 ;;
-;; 2. Explore visualisations of this database to build up an intuition about how the data is related
+;; 2. Explore visualisations of this database to get an intuition about how the data is stored
 
 
 ;; ## Building a Vector Database from the Questions
@@ -68,7 +66,7 @@
 ;; At this stage, we would define a new store and add the questions. The
 ;; in-memory database store function provided by langchain4j also contains an
 ;; option to convert the data to json. For performance/convenience reasons, I have
-;; already pre-made that json file and the 'db-store' variable below simply reads
+;; already pre-made that json file and the `db-store-questions` variable below simply reads
 ;; from that file to load the database into memory. I have left the code used to
 ;; generate the json file in as a comment for reference. You can evaluate the
 ;; code within this comment if you want to re-build the database.
@@ -77,10 +75,10 @@
   (let [db-store (InMemoryEmbeddingStore/new)
         entries-added (count (map #(add-question-to-store! % db-store) questions-list))]
     (do
-      (spit "data/db-store-questions.json" (.serializeToJson db-store))
+      (spit "data/retrieval_store/db-store-questions.json" (.serializeToJson db-store))
       (println (str entries-added " records serialised to a json file at data/db-store-questions.json")))))
 
-(def db-store (InMemoryEmbeddingStore/fromFile "data/db-store-questions.json"))
+(def db-store-questions (InMemoryEmbeddingStore/fromFile "data/retrieval_store/db-store-questions.json"))
 
 
 ;; ### Testing Question Lookup
@@ -90,7 +88,7 @@
 
 (defn query-db-store [text n]
   (let [query (.content (. embedding-model embed text))
-        result (. db-store findRelevant query n)]
+        result (. db-store-questions findRelevant query n)]
     (map (fn [entry]
            {:text (.text (.embedded entry))
             :score (.score entry)})
