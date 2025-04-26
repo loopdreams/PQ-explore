@@ -5,20 +5,16 @@
             [scicloj.kindly.v4.kind :as kind]
             [scicloj.tableplot.v1.plotly :as plotly]
             [jsonista.core :as json])
-  (:import (dev.langchain4j.data.embedding Embedding)
-           (dev.langchain4j.data.segment TextSegment)
-           (dev.langchain4j.model.embedding EmbeddingModel)
-           (dev.langchain4j.store.embedding EmbeddingMatch)
+  (:import (dev.langchain4j.data.segment TextSegment)
            (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
            (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)
-           (smile.manifold TSNE)
-           (smile.feature.extraction PCA)))
+           (smile.manifold TSNE)))
 
 ;; ## Introduction
 ;;
-;; In this section we will go through:
+;; In this section we will:
 ;;
-;; 1. Building an in-memory vector database using langchain4j
+;; 1. Build an in-memory vector database using langchain4j
 ;;
 ;; 2. Explore visualisations of this database to build up an intuition about how the data is related
 
