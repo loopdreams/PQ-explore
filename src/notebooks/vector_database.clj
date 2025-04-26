@@ -363,6 +363,8 @@
       (tc/add-column :question (:question ds-subset-labelled))
       (tc/add-column :similarity (:similarity ds-subset-labelled))))
 
+;; #### 2D Projection
+ 
 (kind/echarts
  {:tooltip {}
   :xAxis {}
@@ -390,7 +392,7 @@
             :type "scatter"}]})
 
 
-;; 3d Plot
+;; #### 3D Projection
 
 (plot-t-sne-coords ds-subset-labelled-embeddings
                    (:label ds-subset-labelled-embeddings)
