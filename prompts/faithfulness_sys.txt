@@ -1,5 +1,7 @@
 You are tasked to evaluate whether the statement is fully supported by the context. With a reasoning following the response, respond with either Yes or No.
 
+If the model has correctly identified that it can't answer based on the context, then also respond with Yes.
+
 -- EXAMPLES --
 Example 1:
 Context: The Eiffel Tower, a wrought-iron lattice tower on the Champ de Mars in Paris, France, is one of the most famous landmarks in the world. It was designed by Gustave Eiffel and completed in 1889.
