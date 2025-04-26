@@ -231,8 +231,8 @@
        "flesch_kincaid_grade_level"  :flesch-kincaid-grade-level
        "rouge_l_recall"              :rouge-l-recall
        "rouge_faithfulness"          :rouge-faithfulness
-       "rouge_l_precision"           :rouge-1-precision
-       "rouge_l_f1"                  :rouge-1-f1
+       "rouge_l_precision"           :rouge-l-precision
+       "rouge_l_f1"                  :rouge-l-f1
        "rouge_p_by_sentence"         :rouge-p-by-sentence
        "bleu_score_by_sentence"      :bleu-score-by-sentence
        "bleu_faithfulness"           :bleu-faithfulness
@@ -247,7 +247,7 @@
 
 (-> (mapv add-deterministic-metrics (tc/rows sample-gen-responses :as-maps))
     (tc/dataset)
-    (tc/select-columns [:model-ref :question :answer :rouge-1-f1 :token-overlap-f1 :bleu-score])
+    (tc/select-columns [:model-ref :question :answer :rouge-l-f1 :token-overlap-f1 :bleu-score])
     (kind/table))
 
 ;; The 'F1' scores are the combination of 'precision' and 'recall' metrics. As
@@ -547,7 +547,7 @@ baseline-grade-level
 
 (def precision-grouped-by-question
   (-> responses-eval-ds-narrowed
-      (tc/select-columns [:question :model-ref :rouge-1-precision :token-overlap-precision])
+      (tc/select-columns [:question :model-ref :rouge-l-precision :token-overlap-precision])
       (tc/group-by :question)
       :data))
 
@@ -563,7 +563,7 @@ baseline-grade-level
       (plotly/layer-line
        {:=y :token-overlap-precision})))
 
-(map #(graph-group % :rouge-1-precision) precision-grouped-by-question)
+(map #(graph-group % :rouge-l-precision) precision-grouped-by-question)
 
 
 ;; Recall
@@ -604,7 +604,7 @@ baseline-grade-level
            (plotly/layer-bar
             {:=y :bleu-score})
            (plotly/layer-bar
-            {:=y :rouge-1-f1})
+            {:=y :rouge-l-f1})
            (plotly/layer-bar
             {:=y :token-overlap-f1})))
      multiple-grouped)
@@ -621,12 +621,12 @@ baseline-grade-level
 (->
  (build-responses-eval-ds-avgs "data/responses_evaluation")
  (add-model-detail :platform)
- (tc/order-by :rouge-1-f1)
+ (tc/order-by :rouge-l-f1)
  (plotly/base
   {:=width 800})
  (plotly/layer-bar
   {:=x :model-ref
-   :=y :rouge-1-f1
+   :=y :rouge-l-f1
    :=color :platform}))
 
 
@@ -689,9 +689,9 @@ baseline-grade-level
                      :semantic-similarity #(average-score % [:cosine-similarity])
                      :recall #(average-score % [:token-overlap-recall
                                                 :rouge-l-recall])
-                     :precision #(average-score % [:rouge-1-precision
+                     :precision #(average-score % [:rouge-l-precision
                                                    :token-overlap-precision])
-                     :f1 #(average-score % [:rouge-1-f1
+                     :f1 #(average-score % [:rouge-l-f1
                                             :token-overlap-f1])})
       (tc/rows :as-maps)
       first))
@@ -789,20 +789,20 @@ baseline-grade-level
 
 (-> responses-eval-data
     (tc/dataset)
-    (tc/select-columns [:answer :rouge-1-precision :token-overlap-precision])
+    (tc/select-columns [:answer :rouge-l-precision :token-overlap-precision])
     (tc/map-columns :wc [:answer] (fn [a]
                                     (count
                                      (str/split a #"\w+"))))
     (plotly/base
      {:=x :wc})
     (plotly/layer-point
-     {:=y :rouge-1-precision})
+     {:=y :rouge-l-precision})
     (plotly/layer-point
      {:=y :token-overlap-precision}))
 
 (-> responses-eval-data
     (tc/dataset)
-    (tc/select-columns [:model-ref :answer :rouge-1-precision :token-overlap-precision])
+    (tc/select-columns [:model-ref :answer :rouge-l-precision :token-overlap-precision])
     (tc/map-columns :wc [:answer] (fn [a]
                                     (count
                                      (str/split a #"\w+"))))

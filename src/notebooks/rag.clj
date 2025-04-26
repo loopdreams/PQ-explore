@@ -1,6 +1,6 @@
 ;; # RAG Test
 (ns notebooks.rag
-  (:require [notebooks.question-vdb :refer [query-db-store add-question-to-store! embedding-model db-store]]
+  (:require [notebooks.vector-database :refer [query-db-store add-question-to-store! embedding-model db-store]]
             [notebooks.preparation :refer [ds]]
             [clojure.string :as str]
             [clj-http.client :as client]
