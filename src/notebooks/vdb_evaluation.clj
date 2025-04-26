@@ -6,9 +6,12 @@
             [notebooks.tokenizer :as tokenizer]
             [scicloj.tableplot.v1.plotly :as plotly]
             [clojure.string :as str]
-            [tablecloth.api :as tc])
+            [tablecloth.api :as tc]
+            [notebooks.vdb-evaluation :as vdb]
+            [notebooks.llm-api :as llm])
   (:import
    (dev.langchain4j.data.segment TextSegment)
+   (dev.langchain4j.model.openai OpenAiEmbeddingModel)
    (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
    (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
 
@@ -43,7 +46,7 @@
   ["What is the government doing to help improve GP services?"
    "Will the government put in place Level 6 (QQI) courses for healthcare assistants?"
    "What is the government doing with regard to the National Drugs Strategy?"
-   "How is the government encouraging local authorities to apple for the town and village renewal scheme?"
+   "How is the government encouraging local authorities to apply for the town and village renewal scheme?"
    "What is the salary scale for an archaeologiest in the local government sector?"])
 
 ;; At the moment, our approach is based on *searching for similar questions*,
@@ -110,23 +113,62 @@
 
 ;; TODO: add ability to use openai embeddings and test with openai embeddings
 
-(defn generate-metrics [highlights chunked-docs & label]
+
+(def openai-embedding-model (-> (OpenAiEmbeddingModel/builder)
+                                (.apiKey (:openai-api-key (edn/read-string (slurp "secrets.edn"))))
+                                (.modelName "text-embedding-3-small")
+                                (.build)))
+
+
+(defn add-docs-to-store! [doc store embedding-model-name]
+  (if (= embedding-model-name :openai)
+    (let [embedding (->> (. openai-embedding-model embed doc)
+                         (.content))]
+      (. store add embedding (TextSegment/from doc)))
+    (let [segment (TextSegment/from doc)
+          embedding (->> segment (. embedding-model embed) (.content))]
+      (. store add embedding segment))))
+
+
+
+(defn generate-metrics [highlights chunked-docs embedding-m & label]
   (let [db-store     (InMemoryEmbeddingStore/new)
-        num          (count (map #(add-question-to-store! % db-store) chunked-docs))
+        num          (count (mapv #(add-docs-to-store! % db-store embedding-m) chunked-docs))
         _            (println num)]
     (loop [[h & hs] highlights
            results  []]
       (if-not h
         results
-        (let [hl-embedding (->> (TextSegment/from h)
-                                (. embedding-model embed)
-                                (.content))
+        (let [hl-embedding (if (= embedding-m :openai)
+                             (->> h
+                                  (. openai-embedding-model embed)
+                                  (.content))
+                             (->> (TextSegment/from h)
+                                  (. embedding-model embed)
+                                  (.content)))
               matches      (->> (. db-store findRelevant hl-embedding 5)
                                 ;; (filterv #(> (.score %) 0.7))
                                 (mapv #(.text (.embedded %)))
                                 (str/join " "))]
           (recur hs
                  (conj results (tokenizer/calculate-retrieval-metrics h matches :word (first label)))))))))
+
+
+
+(comment
+  (def test-db-store (InMemoryEmbeddingStore/new))
+  (count (mapv #(add-docs-to-store! % test-db-store :openai) (chunked-docs (take 5 (:answer ds)) 3)))
+  (def test-hl "There are currently 28 bills at various stages across both Houses of the Oireachtas.")
+  (defonce test-hl-emb (->> test-hl
+                            (. openai-embedding-model embed)
+                            (.content)))
+
+  (tokenizer/calculate-retrieval-metrics
+   test-hl
+   (->> (. test-db-store findRelevant test-hl-emb 5)
+        (mapv #(.text (.embedded %)))
+        (str/join " "))
+   :word))
 
 (defn generate-metrics-question-retrieval-method [highlights hl-questions]
   (loop [idx 0
@@ -139,8 +181,8 @@
             q-matches         (->> (. db-store findRelevant q-embedding 5)
                                    (mapv #(.text (.embedded %))))
             corresponding-ans (->> (tc/select-rows ds #(some #{(:question %)} q-matches))
-                                  :answer
-                                  (str/join " "))]
+                                   :answer
+                                   (str/join " "))]
         (recur (inc idx) (conj res (tokenizer/calculate-retrieval-metrics
                                     (nth highlights idx)
                                     corresponding-ans
@@ -156,17 +198,35 @@
                    (tc/drop-rows #(re-find #"details supplied" (% :question)))
                    (tc/drop-rows #(re-find #"As this is a service matter" (% :answer)))
                    :answer)
-          full-docs-benchmark (generate-metrics hls docs "Full Docs")]
+          full-docs-benchmark (generate-metrics hls docs :langchain "Full Docs")]
       (loop [[x & xs] [3 5 10 15]
              result []]
         (if-not x
           (conj result full-docs-benchmark)
           (let [chunked-docs (chunked-docs docs x)]
             (recur xs
-                 (conj result (generate-metrics hls chunked-docs (str x " Chunks")))))))))
+                   (conj result (generate-metrics hls chunked-docs :langchain (str x " Chunks")))))))))
+
+  (defonce metric-comparisons-openai-embeddings
+    (let [hls highlights-answers
+          docs (-> ds
+                   (tc/drop-missing :answer)
+                   (tc/drop-rows #(re-find #"details supplied" (% :question)))
+                   (tc/drop-rows #(re-find #"As this is a service matter" (% :answer)))
+                   (tc/select-rows (range 1))
+                   :answer)
+          full-docs-benchmark (generate-metrics hls docs :openai "Full Docs")]
+      (loop [[x & xs] [3 5 10 15]
+             result []]
+        (if-not x
+          (conj result full-docs-benchmark)
+          (let [chunked-docs (chunked-docs docs x)]
+            (recur xs
+                   (conj result (generate-metrics hls chunked-docs :openai (str x " Chunks")))))))))
 
   (spit "data/metrics_retrieval_data.edn" (into (reduce into met-comparisons)
-                                                (generate-metrics-question-retrieval-method highlights-answers highlights-questions))))
+                                                (generate-metrics-question-retrieval-method highlights-answers highlights-questions)))
+  (spit "data/metrics_retrieval_data_openai.edn" (reduce into met-comparisons-openai-embeddings)))
 
 (def comparison-data (edn/read-string (slurp "data/metrics_retrieval_data.edn")))
 
@@ -222,41 +282,45 @@
                     (tc/drop-rows #(re-find #"As this is a service matter" (% :answer)))
                     :answer)
 
-        docs (chunked-docs answers 3)
+        docs (-> (chunked-docs answers 3)
+                 distinct)              ;; before filtering for duplicates there were around 24K chunks, after filtering around 18K
         db-store (InMemoryEmbeddingStore/new)
         _c (count (mapv #(add-question-to-store! % db-store) docs))]
     (println _c)
     (spit "data/retrieval_store/store.json" (.serializeToJson db-store))))
 
+
 (def db-store-chunked-answers (InMemoryEmbeddingStore/fromFile "data/retrieval_store/store.json"))
 
 
-(defn generate-context [question]
+(defn generate-context [question db-store]
   (let [emb-question (.content (. embedding-model embed question))
-        related-docs (. db-store-chunked-answers findRelevant emb-question 5)]
+        related-docs (. db-store findRelevant emb-question 5)]
     (map (fn [doc]
            {:text (.text (.embedded doc))
             :score (.score doc)})
          related-docs)))
 
 (kind/table
- (generate-context "What is the government doing to help improve GP services?"))
+ (generate-context "What is the government doing to help improve GP services?"
+                   db-store-chunked-answers))
 
 ;; These answers are not a bad starting point for answering this kind of broad
 ;; question. You can see some duplication in the answers, which, if this were to
 ;; be optimized further should be removed from the database to improve results further.
-;; 
+;;
 ;; Looking at the first answer in the table above, the figure of '211m EUR' is
 ;; referenced in relation to the 2019 GP Agreement. Let's see if the database
 ;; can match this exact figure:
 
 (kind/table
- (generate-context "How much annual investment was provided under the 2019 GP agreement?"))
+ (generate-context "How much annual investment was provided under the 2019 GP agreement?"
+                   db-store-chunked-answers))
 
 ;; Every document retrieved seems to contain the relevant figure :)
 ;;
 ;; For completness, let's try this same, more specific, question with the
-;; previous approach. As you can see below It's much less focused! 
+;; previous approach. As you can see below It's much less focused!
 
 
 (->

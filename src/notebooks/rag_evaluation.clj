@@ -262,6 +262,36 @@
 ;; logic, the metrics do indicate that the llama3.1 responses were slightly
 ;; better than the gemma3 responses.
 
+;; ### Semantic Similarity
+;;
+;; We'll also check, very roughly, the semantic similarity (based on cosine
+;; similarity) between the generated responses and the ground truth.
+
+(defn calculate-cosine-similarity [text-a vec-text-b]
+  (let [embedding-model (AllMiniLmL6V2EmbeddingModel/new)
+        embedding-fn (fn [text]
+                       (->> (TextSegment/from text)
+                            (. embedding-model embed)
+                            (.content)))]
+    (CosineSimilarity/between (embedding-fn text-a) (embedding-fn (str/join " " vec-text-b)))))
+
+(defn add-semantic-similarity [{:keys [answer ground-truth] :as rag-data}]
+  (let [similarity-score (calculate-cosine-similarity answer ground-truth)]
+    (-> rag-data
+        (assoc :cosine-similarity similarity-score))))
+
+
+(add-semantic-similarity {:answer "Paris is the capital of France."
+                          :ground-truth ["Berlin in the capital of France."]})
+
+(add-semantic-similarity {:answer "Paris is the capital of France."
+                          :ground-truth ["The capital of France is Paris."]})
+
+(add-semantic-similarity {:answer "Paris is the capital of France."
+                          :ground-truth ["The capital of France is Paris."
+                                         "The Mona Lisa is in Paris."]})
+
+
 
 ;; ### LLM Metrics
 
@@ -323,10 +353,11 @@
       (assoc :evaluator-model model)))
 
 
-(defn add-all-evaluation-metrics [responses model]
+(defn add-all-generation-evaluation-metrics [responses model]
   (mapv (fn [resp]
           (-> resp
               add-deterministic-metrics
+              add-semantic-similarity
               (add-llm-metrics model)))
         responses))
 
@@ -372,7 +403,7 @@
 (defn run-and-save-evaluation-metrics! [responses model]
   (let [model-ref (:model-ref (first responses))
         f-name (str "data/responses_evaluation/" model-ref "_evaluation.edn")
-        resp (add-all-evaluation-metrics responses model)]
+        resp (add-all-generation-evaluation-metrics responses model)]
     (spit f-name resp)))
 
 (defn run-and-save-all-evals! [responses-dir model]
@@ -388,7 +419,7 @@
   (run-and-save-all-evals! "data/responses" "o4-mini-2025-04-16"))
 
 
-(defn average [coll]
+(defn average-coll [coll]
   (float
    (/ (apply + (remove nil? coll))
       (count (remove nil? coll)))))
@@ -397,7 +428,7 @@
   (let [cols (tc/column-names numerical-ds)]
     (tc/dataset
      (reduce (fn [res col]
-               (assoc res col (average (numerical-ds col))))
+               (assoc res col (average-coll (numerical-ds col))))
              {} cols))))
 
 (defn summarise-model-performance-avgs [rag-datas]
@@ -442,6 +473,7 @@
 (def responses-eval-data (concat-responses-eval-data "data/responses_evaluation"))
 (def responses-eval-ds-narrowed (concat-responses-eval-ds-narrowed "data/responses_evaluation"))
 
+
 (defn make-boxplot [metric]
   (->
    responses-eval-ds-narrowed
@@ -467,13 +499,13 @@
 
 ;; Reading Ease Average
 (def baseline-reading-ease
-  (average (map first reading-scores)))
+  (average-coll (map first reading-scores)))
 
 baseline-reading-ease
 
 ;; Grade Level Average
 (def baseline-grade-level
-  (average (map second reading-scores)))
+  (average-coll (map second reading-scores)))
 
 baseline-grade-level
 
@@ -482,6 +514,7 @@ baseline-grade-level
 (make-boxplot :flesch-reading-ease)
 
 (make-boxplot :flesch-kincaid-grade-level)
+
 
 ;; Example of max/min reading ease answers
 
@@ -634,6 +667,174 @@ baseline-grade-level
 ;; - across score
 ;; - per question
 
+;; Most important metrics
+;; Faithfulness
+;; Correctness
+;; Relevance
+;; Semantic similarity
+;; Recall
+;; Precision
 
-;; ### 'Overall' Rating
-;; TODO: some kind of weighing scheme to highlight which metrics impact outcome most
+(defn average-score [ds metrics]
+  (->>
+   (mapv #(ds %) metrics)
+   (reduce into)
+   (average-coll)))
+
+(defn eval-averages [ds]
+  (-> ds
+      (tc/aggregate {:faithfulness #(average-score % [:metric-llm-faithfulness-score])
+                     :correctness #(average-score % [:metric-llm-correctness-score])
+                     :relevance #(average-score % [:metric-llm-relevance-score])
+                     :semantic-similarity #(average-score % [:cosine-similarity])
+                     :recall #(average-score % [:token-overlap-recall
+                                                :rouge-l-recall])
+                     :precision #(average-score % [:rouge-1-precision
+                                                   :token-overlap-precision])
+                     :f1 #(average-score % [:rouge-1-f1
+                                            :token-overlap-f1])})
+      (tc/rows :as-maps)
+      first))
+
+(def eval-averages-all (eval-averages responses-eval-ds-narrowed))
+
+(defn indicator-symbol [colour]
+  [:span {:style (str "color: " colour ";")} "&#11044"])
+(def indicator-bad (indicator-symbol "red"))
+(def indicator-medium (indicator-symbol "yellow"))
+(def indicator-good (indicator-symbol "green"))
+;; Start with table
+(defn model-performance-summary [ds model-ref]
+  (let [model-per       (filter #(= (:model-ref %) model-ref) ds)
+        faithfulness    (count (filter #(= (:metric-llm-faithfulness-score %) 1) model-per))
+        total-questions (count model-per)
+        {:keys [correctness
+                relevance
+                semantic-similarity
+                recall
+                precision
+                f1]} (-> model-per (tc/dataset) eval-averages)]
+    [:div
+     [:h1 (name model-ref)]
+     [:p (str "Scores based on " total-questions " evaluation questions.")]
+     [:table {:style "width: 100%;"}
+      [:tr
+       [:th "Metric"]
+       [:th "Score"]
+       [:th "Reference Average"]
+       [:th "Status"]]
+      [:tr
+       [:td "Faithfulness"]
+       [:td (str faithfulness "/" total-questions)]
+       [:td (:faithfulness eval-averages-all)]
+       [:td (condp < faithfulness
+              9 indicator-good
+              7 indicator-medium
+              indicator-bad)]]
+      [:tr
+       [:td "Correctness"]
+       [:td correctness]
+       [:td (:correctness eval-averages-all)]
+       [:td (condp < correctness
+              3 indicator-good
+              2 indicator-medium
+              indicator-bad)]]
+      [:tr
+       [:td "Relevance"]
+       [:td relevance]
+       [:td (:correctness eval-averages-all)]
+       [:td (condp < relevance
+              2 indicator-good
+              1 indicator-medium
+              indicator-bad)]]
+      [:tr
+       [:td "Semantic Similarity"]
+       [:td semantic-similarity]
+       [:td (:semantic-similarity eval-averages-all)]
+       [:td (condp < semantic-similarity
+              0.85 indicator-good
+              0.75 indicator-medium
+              indicator-bad)]]
+      [:tr
+       [:td "Recall"]
+       [:td recall]
+       [:td (:recall eval-averages-all)]
+       [:td (condp < recall
+              0.85 indicator-good
+              0.75 indicator-medium
+              indicator-bad)]]
+      [:tr
+       [:td "Precision"]
+       [:td precision]
+       [:td (:precision eval-averages-all)]
+       [:td (condp < precision
+              0.26 indicator-good
+              0.22 indicator-medium
+              indicator-bad)]]
+      [:tr
+       [:td "F1"]
+       [:td f1]
+       [:td (:f1 eval-averages-all)]
+       [:td (condp < f1
+              0.35 indicator-good
+              0.25 indicator-medium
+              indicator-bad)]]]]))
+
+
+
+(mapv #(kind/hiccup (model-performance-summary responses-eval-data %))
+     (distinct (map :model-ref responses-eval-data)))
+
+;; Precision/word-count
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:answer :rouge-1-precision :token-overlap-precision])
+    (tc/map-columns :wc [:answer] (fn [a]
+                                    (count
+                                     (str/split a #"\w+"))))
+    (plotly/base
+     {:=x :wc})
+    (plotly/layer-point
+     {:=y :rouge-1-precision})
+    (plotly/layer-point
+     {:=y :token-overlap-precision}))
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:model-ref :answer :rouge-1-precision :token-overlap-precision])
+    (tc/map-columns :wc [:answer] (fn [a]
+                                    (count
+                                     (str/split a #"\w+"))))
+    (tc/order-by :wc :desc)
+    (tc/select-rows (range 1)))
+
+;; Which question has the most wrong (non-faithfull) answers?
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:question :metric-llm-faithfulness-score])
+    (tc/drop-missing :metric-llm-faithfulness-score) ;; There is actually one missing here...
+    (tc/group-by [:question])
+    (tc/aggregate {:total-correct #(apply + (% :metric-llm-faithfulness-score))})
+    (tc/order-by :total-correct))
+
+;; Let's look at a couple of examples/evaluation resoning for the lowest-scoring question
+
+(-> responses-eval-data
+    (tc/dataset)
+    (tc/select-columns [:model-ref :question :answer :metric-llm-faithfulness-score :metric-llm-faithfulness-explanation])
+    (tc/drop-missing :metric-llm-faithfulness-score)
+    (tc/select-rows #(and (= (:question %) "Will the government put in place Level 6 (QQI) courses for healthcare assistants?")
+                          (= (:metric-llm-faithfulness-score %) 0)))
+    (tc/select-columns [:model-ref :answer :metric-llm-faithfulness-explanation]))
+
+;; We can see a major error here with my evaluation prompt. In some cases the
+;; model answers that "It cannot provide information using the information
+;; available" which should be an acceptable answer in this context (since the
+;; prompt instructs is that it should provide this default if it can't answer)
+;;
+;; Therefore, for the evaluation prompt, this detail should be added (for
+;; example, by also providing the full prompt given to the model)
+
+;; TODO: maybe re-run the tests again to show this difference.
