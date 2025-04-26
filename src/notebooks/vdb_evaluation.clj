@@ -1,7 +1,7 @@
 (ns notebooks.vdb-evaluation
   (:require [clojure.edn :as edn]
             [notebooks.preparation :refer [ds]]
-            [notebooks.question-vdb :refer [add-question-to-store! db-store query-db-store]]
+            [notebooks.vector-database :refer [add-question-to-store! db-store query-db-store]]
             [scicloj.kindly.v4.kind :as kind]
             [notebooks.tokenizer :as tokenizer]
             [scicloj.tableplot.v1.plotly :as plotly]

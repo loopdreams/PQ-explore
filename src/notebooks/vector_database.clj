@@ -1,5 +1,5 @@
-;; # Questions Vector Database
-(ns notebooks.question-vdb
+;; # 2. Vector Database
+(ns notebooks.vector-database
   (:require [tablecloth.api :as tc]
             [notebooks.preparation :refer [ds]]
             [scicloj.kindly.v4.kind :as kind]
