@@ -1,13 +1,20 @@
-;; # Dataset Preparation
+;; # 1. Dataset Preparation
 (ns notebooks.preparation
   (:require [tablecloth.api :as tc]
             [java-time.api :as jt]
             [clojure.string :as str]
             [scicloj.kindly.v4.kind :as kind]))
 
+;; ## Cleaning/preparation steps
 
-
-;; ## Some cleaning/preparation steps on the dataset.
+;; The data is taken from the [Oireachtas website](https://www.oireachtas.ie/).
+;; It contains key fields such as 'question', 'answer', 'date' and 'topic'.
+;; There are around 10K quesitons/answers in the initial dataset, but many of
+;; these will be removed through some cleaning steps (below).
+;;
+;; The questions/answers are written submissions by members of parliament on a
+;; wide variety of topics. The written answers are provided by Ministers, who
+;; are heads of various departments.
 
 (def datasource "data/20250302_PQs_10K_2024_answers.csv")
 
@@ -49,9 +56,6 @@
 ;; In order to try consolidate some of the department names, we will also transform
 ;; the older labels into single-word department names.
 ;;
-;; TODO: Also, map an additional column with the 'full name' of the department. At the
-;; moment (following a recent election), this full names are still being processed/decided,
-;; so come back to this later.
 
 (defn normalise-department-name [label]
   (cond
@@ -76,7 +80,6 @@
 (defn clean-nbs-answers [answer]
   (str/replace answer #" " " "))
 
-
 ;; ### Duplicate questions
 
 ;; There are some questions that are duplicates. For example:
@@ -95,7 +98,10 @@
 ;; using tablecloth's unique-by function.
 
 
-;; TODO: notes on urls
+;; ### Adding Question URLs
+;;
+;; In case we want to reference the original source, we'll also add the question
+;; urls to the dataset.
 
 (defn extract-question-num [q] (re-find #"^\d+" q))
 (defn extract-question-id [q] (re-find #"(?<=\[).*(?=\])" q))
@@ -166,7 +172,10 @@
    [:li "The five most commonnly asked departments are: " (str/join ", " top-5-most-asked-departments)]]])
 
 
-;; ## A look at the dataset
-(tc/info ds)
+;; ## A quick look at the dataset
+
+(tc/column-names ds)
+
+(tc/row-count ds)
 
 (tc/head ds)
