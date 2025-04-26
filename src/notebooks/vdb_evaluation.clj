@@ -114,15 +114,15 @@
 ;; the overlap between both is 70 tokens, then the IoU would be 70/(200+100-70)
 ;; = 0.304
 
-;; ### Splitting Docs
+;; ### Splitting the Documents
 
-;; When thinking about recall/precision, a natural question is around the size
-;; of the documents that are stored in the database. For example, if we are
-;; always retrieving the 5 most similar docs, but each of those are 1000 words
-;; long, then we are always passing the model 5000 words. This will probably
-;; increase the chance of the target information being present, but it will also
-;; increase the amount of superfluous information passed to the LLM (i.e.
-;; decrease precision)
+;; When thinking about recall/precision, a natural question that we might ask
+;; relates to the size of the documents that are stored in the database. For
+;; example, if we are always retrieving the 5 most similar docs, but each of
+;; those are 1000 words long, then we are always passing the model 5000 words.
+;; This will probably increase the chance of the target information being
+;; present, but it will also increase the amount of superfluous information
+;; passed to the LLM (i.e.  decrease precision)
 ;;
 ;; Therefore, we can try splitting the documents into chunks of various sizes.
 ;;
@@ -140,13 +140,13 @@
 ;; To test our retrieval strategies, we will split up the information contained in the
 ;; dataset 'answers' in the following ways:
 ;;
-;; - Chunks of 3 sentences (3 Chunks)
+;; - Chunks of 3 sentences (Chunks 3)
 ;;
-;; - Chunks of 5 sentences (5 Chunks)
+;; - Chunks of 5 sentences (Chunks 5)
 ;;
-;; - Chunks of 10 sentences (10 Chunks)
+;; - Chunks of 10 sentences (Chunks 10)
 ;;
-;; - Chunks of 15 sentences (15 Chunks)
+;; - Chunks of 15 sentences (Chunks 15)
 ;;
 ;; - Original answers, i.e., no splitting (Full Docs)
 ;;
@@ -166,7 +166,8 @@
 ;;
 ;; Both functions below are mostly identical, except the 'question method'
 ;; function adds a step from looking up an answer based on a retrieved similar
-;; question.
+;; question, it also re-used the previously created db-store-questions, so it
+;; much quicker to run.
 
 (defn calculate-metrics [questions answers chunked-docs & label]
   (let [db-store (InMemoryEmbeddingStore/new)
@@ -238,7 +239,6 @@
 
 (def comparison-data (edn/read-string (slurp "data/retrieval_metrics/results.edn")))
 
-
 (kind/table comparison-data)
 
 (defn average [coll]
@@ -253,7 +253,6 @@
    (tc/aggregate {:avg-recall #(average (% :recall))
                   :avg-precision #(average (% :precision))
                   :avg-IoU #(average (% :IoU))})))
-
 
 (-> ds-metrics-avg
     (plotly/layer-line
@@ -273,18 +272,20 @@
       :=y :avg-IoU}))
 
 
-;; In the graphs above, the results for 'recall' are very surprising. Generally,
-;; you would expect recall to go up with longer chunks of text (i.e., there
-;; would be more likihood of capturing the highlighted text). A major caveat
-;; here is that these would need to be run on a much larger test dataset to get
-;; something a bit more tangible.
+;; The results are mostly as expected - with larger chunk sizes recall goes up,
+;; although it notably dips with chunk sizes of 10. At the same time, precision
+;; goes down - there is more excess information that is perhaps not needed.
 ;;
-;; For now, let's just be happy that these results point to a clear optimum
-;; retrieval strategy for this dataset - splitting the answers into 3-sentence
-;; chuncks results in both high recall and relatively high precision.
-
-;; Based on the above, let's try to generate context using a chunking method
-;; that divides the answer text into chunks of three sentences.
+;; Interestingly, the 'question retrieval' method has slightly higher precision
+;; than the method of looking up the full docs, even though in both cases what
+;; is returned are full answers. This suggests that perhaps the 'naive' approach
+;; of searching for similar questions and returning the corresponding answers is
+;; perhaps slightly more precise that searching through the full answers.
+;;
+;; Still, it looks like using either chunks of 3 or 5 sentences might be the best overall.
+;; For the RAG application, we'll try using chunks of 3 sentences.
+;;
+;; Let's build that database and save it to a file.
 
 (comment
   (let [answers (-> ds
@@ -294,7 +295,7 @@
                     :answer)
 
         docs (-> (chunked-docs answers 3)
-                 distinct)              ;; before filtering for duplicates there were around 24K chunks, after filtering around 18K
+                 distinct) ;; before filtering for duplicates there were around 24K chunks, after filtering around 18K
         db-store (InMemoryEmbeddingStore/new)
         _c (count (mapv #(add-question-to-store! % db-store) docs))]
     (println _c)
@@ -303,6 +304,11 @@
 
 (def db-store-chunked-answers (InMemoryEmbeddingStore/fromFile "data/retrieval_store/db-store-docs.json"))
 
+;; ### Final Checks
+;; 
+;; Let's have a look at the context that is actually generated by each of the
+;; approaches to see the difference that the alternate retrieval strategy can
+;; make.
 
 (defn generate-context [question db-store]
   (let [emb-question (.content (. embedding-model embed question))
@@ -312,13 +318,14 @@
             :score (.score doc)})
          related-docs)))
 
+;; First we'll look at a very general question about GP services:
+
 (kind/table
  (generate-context "What is the government doing to help improve GP services?"
                    db-store-chunked-answers))
 
 ;; These answers are not a bad starting point for answering this kind of broad
-;; question. You can see some duplication in the answers, which, if this were to
-;; be optimized further should be removed from the database to improve results further.
+;; question. 
 ;;
 ;; Looking at the first answer in the table above, the figure of '211m EUR' is
 ;; referenced in relation to the 2019 GP Agreement. Let's see if the database
