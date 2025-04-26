@@ -5,8 +5,7 @@
    [notebooks.preparation :refer [ds]]
    [scicloj.kindly.v4.kind :as kind]
    [notebooks.vdb-evaluation :as vdb]
-   [tablecloth.api :as tc]
-   [java-time.api :as jt]))
+   [tablecloth.api :as tc]))
 
 ;; ## Retrieval Augmented Generation
 ;; [Intro text]
@@ -24,8 +23,8 @@
 ;; Before passing, the question to the prompt generator, we will re-use the function in the last section to generate the context.
 
 
-(defn add-context [{:keys [question] :as rag-data}]
-  (let [ctx (mapv :text (vdb/generate-context question))]
+(defn add-context [{:keys [question] :as rag-data} db-store]
+  (let [ctx (mapv :text (vdb/generate-context question db-store))]
     (assoc rag-data :retrieved-context ctx)))
 
 (defn add-pq-prompt [{:keys [retrieved-context] :as rag-data}]
@@ -42,10 +41,9 @@ then reply with \"I am unable to answer this question with the information I hav
 
 (kind/md
  (-> {:question sample-question}
-     add-context
+     (add-context vdb/db-store-chunked-answers)
      add-pq-prompt
      :system-prompt))
-
 
 ;; Now that we have a way to generate a prompt, let's pass it to an LLM.
 ;;
@@ -85,6 +83,7 @@ then reply with \"I am unable to answer this question with the information I hav
       :answer
       kind/md)
 
+
   (-> {:question sample-question-detail
        :model-ref "llama3.2"}
       add-context
@@ -93,10 +92,15 @@ then reply with \"I am unable to answer this question with the information I hav
       :answer
       kind/md))
 
+
+
 ;; Putting these together into single function:
 
-(defn make-rag-data [rag-data]
-  (-> rag-data add-context add-pq-prompt add-llm-response))
+(defn get-rag-answer [rag-data db-store]
+  (-> rag-data
+      (add-context db-store)
+      add-pq-prompt
+      add-llm-response))
 
 
 
@@ -115,14 +119,14 @@ then reply with \"I am unable to answer this question with the information I hav
        (str/join "\n\n- "
                  links)))
 
-(defn generate-answer-with-references [rag-data]
-  (let [rag-data (make-rag-data rag-data)
+(defn generate-answer-with-references [rag-data db-store]
+  (let [rag-data (get-rag-answer rag-data db-store)
         ctx-docs (:retrieved-context rag-data)
         docs-ref-links (format-links-md (mapv get-reference-link-for-doc ctx-docs))]
     (str (:answer rag-data) "\n\n" docs-ref-links)))
 
 (comment
-  (-> {:question sample-question-broad
-       :model-ref "llama3.2"}
-      generate-answer-with-references
+  (-> {:question sample-question
+       :model-ref "gemini-2.0-flash"}
+      (generate-answer-with-references vdb/db-store-chunked-answers)
       kind/md))

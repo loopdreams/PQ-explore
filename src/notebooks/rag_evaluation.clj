@@ -10,7 +10,14 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [tablecloth.api :as tc]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [notebooks.vdb-evaluation :as vdb])
+  (:import
+   (dev.langchain4j.data.segment TextSegment)
+   (dev.langchain4j.model.openai OpenAiEmbeddingModel)
+   (dev.langchain4j.store.embedding CosineSimilarity)
+   (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
+   (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
 
 
 ;; **NOTE!**
@@ -128,7 +135,8 @@
 
 (defn ask-llm-save-responses! [model questions]
   (let [responses (reduce (fn [res question]
-                            (conj res (gen/get-rag-answer (assoc question :model-ref model))))
+                            (conj res (gen/get-rag-answer (assoc question :model-ref model)
+                                                          vdb/db-store-chunked-answers)))
                           [] questions)
         f-name (str "data/responses/" model "_responses.edn")]
     (spit f-name responses)))
