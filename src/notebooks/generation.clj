@@ -1,3 +1,4 @@
+;; # 4. Answer Generation
 (ns notebooks.generation
   (:require
    [clojure.string :as str]
@@ -7,21 +8,19 @@
    [notebooks.vdb-evaluation :as vdb]
    [tablecloth.api :as tc]))
 
-;; ## Retrieval Augmented Generation
-;; [Intro text]
 
 ;; To generate an answering using a RAG approach, all we have to do is add our
 ;; retrieved context to a prompt.
 ;;
-;; We will re-use the same question as we used in the previous
+;; To start with, we will re-use the same question as we used in the previous
 ;; section.
 
 (def sample-question "How much annual investment was provided under the 2019 GP agreement?")
 
+
 ;; Next, we will create some prompt functions to help build the context.
 ;;
-;; Before passing, the question to the prompt generator, we will re-use the function in the last section to generate the context.
-
+;; ## Context Prompt
 
 (defn add-context [{:keys [question] :as rag-data} db-store]
   (let [ctx (mapv :text (vdb/generate-context question db-store))]
@@ -38,18 +37,23 @@ If you can't find sufficient information in the context to answer the question a
 then reply with \"I am unable to answer this question with the information I have available.\""
               "\n\n CONTEXT: " (str/join "\n\n" retrieved-context))))
 
+(defn quoted-response
+  "To help distinuish the llm text from other text in the notebook"
+  [text]
+  (->>
+   (str/split-lines text)
+   (mapv (fn [line] (str "> " line)))
+   (str/join "\n")))
 
 (kind/md
  (-> {:question sample-question}
      (add-context vdb/db-store-chunked-answers)
      add-pq-prompt
-     :system-prompt))
+     :system-prompt
+     quoted-response))
 
+;; ## LLM Answer Generation
 ;; Now that we have a way to generate a prompt, let's pass it to an LLM.
-;;
-;; [text here referencing the llm namespace]
-
-(kind/table llm/llm-models)
 
 (defn add-llm-response [{:keys [model-ref question system-prompt] :as rag-data}]
   (let [answer (llm/ask-llm
@@ -59,14 +63,18 @@ then reply with \"I am unable to answer this question with the information I hav
     (assoc rag-data :answer answer)))
 
 (comment
-  (-> {:question sample-question
-       :model-ref "llama3.2"}
-      add-context
-      add-pq-prompt
-      add-llm-response
-      :answer
-      kind/md))
+  (spit "data/generation_examples/example_1.txt"
+        (-> {:question sample-question
+             :model-ref "llama3.2"}
+            (add-context vdb/db-store-chunked-answers)
+            add-pq-prompt
+            add-llm-response
+            :answer)))
 
+(-> "data/generation_examples/example_1.txt"
+    slurp
+    quoted-response
+    kind/md)
 
 
 ;; Let's try a few additional initial tests:
@@ -75,23 +83,31 @@ then reply with \"I am unable to answer this question with the information I hav
 (def sample-question-detail "What is the government doing to support GPs in Limerick city?")
 
 (comment
-  (-> {:question sample-question-broad
-       :model-ref "llama3.2"}
-      add-context
-      add-pq-prompt
-      add-llm-response
-      :answer
-      kind/md)
+  (spit "data/generation_examples/example_2.txt"
+        (-> {:question sample-question-broad
+             :model-ref "llama3.2"}
+            (add-context vdb/db-store-chunked-answers)
+            add-pq-prompt
+            add-llm-response
+            :answer))
 
+  (spit "data/generation_examples/example_3.txt"
+        (-> {:question sample-question-detail
+             :model-ref "llama3.2"}
+            (add-context vdb/db-store-chunked-answers)
+            add-pq-prompt
+            add-llm-response
+            :answer)))
 
-  (-> {:question sample-question-detail
-       :model-ref "llama3.2"}
-      add-context
-      add-pq-prompt
-      add-llm-response
-      :answer
-      kind/md))
+(-> "data/generation_examples/example_2.txt"
+    slurp
+    quoted-response
+    kind/md)
 
+(-> "data/generation_examples/example_3.txt"
+    slurp
+    quoted-response
+    kind/md)
 
 
 ;; Putting these together into single function:
@@ -104,6 +120,7 @@ then reply with \"I am unable to answer this question with the information I hav
 
 
 
+;; ## Answer with References
 ;; As an added feature, we could use the original dataset to try provide a reference for the question.
 
 
@@ -126,7 +143,13 @@ then reply with \"I am unable to answer this question with the information I hav
     (str (:answer rag-data) "\n\n" docs-ref-links)))
 
 (comment
-  (-> {:question sample-question
-       :model-ref "gemini-2.0-flash"}
-      (generate-answer-with-references vdb/db-store-chunked-answers)
-      kind/md))
+  (spit "data/generation_examples/example_4.txt"
+        (-> {:question sample-question
+             :model-ref "gemini-2.0-flash"}
+            (generate-answer-with-references vdb/db-store-chunked-answers))))
+
+(-> "data/generation_examples/example_4.txt"
+    slurp
+    quoted-response
+    (kind/md))
+
