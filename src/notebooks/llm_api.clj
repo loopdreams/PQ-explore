@@ -94,24 +94,27 @@
 ;; ## Model References
 
 (def llm-models
-  [{:platform "Ollama" :name "Llama3.1" :parameters "8B" :model-ref "llama3.1" :model-type "local"}
-   {:platform "Ollama" :name "Llama3.2" :parameters "3B" :model-ref "llama3.2" :model-type "local"}
-   {:platform "Ollama" :name "Mistral" :parameters "7B" :model-ref "mistral" :model-type "local"}
-   {:platform "Ollama" :name "LLaVa" :parameters "7B" :model-ref "llava" :model-type "local"}
-   {:platform "Ollama" :name "Deepseek R1" :parameters "7B" :model-ref "deepseek-r1" :model-type "local"}
-   {:platform "Ollama" :name "Gemma 3" :parameters "1B" :model-ref "gemma3:1b" :model-type "local"}
-   {:platform "Ollama" :name "Gemma 3" :parameters "4B" :model-ref "gemma3" :model-type "local"}
-   {:platform "Ollama" :name "Granite 3.2" :parameters "8B" :model-ref "granite3.2" :model-type "local"}
-   {:platform "OpenAI" :name "GPT-4 Mini" :parameters "? 8B" :model-ref "gpt-4o-mini" :price-in 0.15 :price-out 0.6 :model-type "cloud"}
-   {:platform "OpenAI" :name "GPT-4o" :parameters "?" :model-ref "gpt-4o" :price-in 2.5 :price-out 10 :model-type "cloud"}
-   {:platform "OpenAI" :name "GPT-o3 Mini" :parameters "?" :model-ref "gpt-o3-mini" :price-in 1.10 :price-out 4.40 :model-type "cloud"}
-   {:platform "OpenAI" :name "GPT-3.5 Turbo" :parameters "?" :model-ref "gpt-3.5-turbo" :price-in 0.5 :price-out 1.5 :model-type "cloud"}
-   {:platform "Google" :name "Gemini 2.0 Flash" :parameters "?" :model-ref "gemini-2.0-flash" :model-type "cloud"}
-   {:platform "Google" :name "Gemini 2.0 Flash Lite" :parameters "?" :model-ref "gemini-2.0-flash-lite" :model-type "cloud"}
-   {:platform "Google" :name "Gemini 2.5 Pro" :parameters "?" :model-ref "gemini-2.5-pro-exp-03-25" :model-type "cloud"}
-   {:platform "Anthropic" :name "Claude 3.7 Sonnet" :model-ref "claude-3-7-sonnet-20250219" :price-in 3.0 :price-out 15.0 :parameters "?" :model-type "cloud"}
-   {:platform "Anthropic" :name "Claude 3.5 Haiku" :model-ref "claude-3-5-haiku-20241022" :price-in 0.8 :price-out 4.0 :parameters "?" :model-type "cloud"}
-   {:platform "Anthropic" :name "Claude 3 Haiku" :model-ref "claude-3-haiku-20240307" :price-in 0.25 :price-out 1.25 :parameters "?" :model-type "cloud"}])
+  [{:model-ref "llama3.1" :platform "Ollama" :name "Llama3.1" :parameters "8B"  :model-type "local"}
+   {:model-ref "llama3.2" :platform "Ollama" :name "Llama3.2" :parameters "3B"  :model-type "local"}
+   {:model-ref "mistral" :platform "Ollama" :name "Mistral" :parameters "7B"  :model-type "local"}
+   {:model-ref "llava" :platform "Ollama" :name "LLaVa" :parameters "7B"  :model-type "local"}
+   {:model-ref "deepseek-r1" :platform "Ollama" :name "Deepseek R1" :parameters "7B"  :model-type "local"}
+   {:model-ref "gemma3:1b" :platform "Ollama" :name "Gemma 3" :parameters "1B"  :model-type "local"}
+   {:model-ref "gemma3:4b" :platform "Ollama" :name "Gemma 3" :parameters "4B"  :model-type "local"}
+   {:model-ref "granite3.2" :platform "Ollama" :name "Granite 3.2" :parameters "8B"  :model-type "local"}
+   {:model-ref "gpt-4o-mini" :platform "OpenAI" :name "GPT-4 Mini" :parameters "? 8B"  :price-in 0.15 :price-out 0.6 :model-type "cloud"}
+   {:model-ref "gpt-4o" :platform "OpenAI" :name "GPT-4o" :parameters "?"  :price-in 2.5 :price-out 10 :model-type "cloud"}
+   {:model-ref "o4-mini-2025-04-16" :platform "OpenAI" :name "GPT-4o" :parameters "?"  :price-in 1.10 :price-out 4.40 :model-type "cloud"}
+   {:model-ref "o3-mini" :platform "OpenAI" :name "GPT-o3 Mini" :parameters "?"  :price-in 1.10 :price-out 4.40 :model-type "cloud"}
+   {:model-ref "gpt-3.5-turbo" :platform "OpenAI" :name "GPT-3.5 Turbo" :parameters "?"  :price-in 0.5 :price-out 1.5 :model-type "cloud"}
+   {:model-ref "gemini-2.0-flash" :platform "Google" :name "Gemini 2.0 Flash" :parameters "?"  :model-type "cloud"}
+   {:model-ref "gemini-2.0-flash-lite" :platform "Google" :name "Gemini 2.0 Flash Lite" :parameters "?"  :model-type "cloud"}
+   {:model-ref "gemini-2.5-pro-exp-03-25" :platform "Google" :name "Gemini 2.5 Pro" :parameters "?"  :model-type "cloud"}
+   {:model-ref "gemini-2.5-pro-preview-03-25" :platform "Google" :name "Gemini 2.5 Pro (Paid)" :parameters "?" :price-in 1.25 :price-out 10.0 :model-type "cloud"}
+   {:model-ref "gemini-2.5-flash-preview-04-17" :platform "Google" :name "Gemini 2.5 Flash Preview"  :parameters "?" :price-in 0.15 :price-out 0.6 :model-type "cloud"}
+   {:model-ref "claude-3-7-sonnet-20250219" :platform "Anthropic" :name "Claude 3.7 Sonnet"  :price-in 3.0 :price-out 15.0 :parameters "?" :model-type "cloud"}
+   {:model-ref "claude-3-5-haiku-20241022" :platform "Anthropic" :name "Claude 3.5 Haiku"  :price-in 0.8 :price-out 4.0 :parameters "?" :model-type "cloud"}
+   {:model-ref "claude-3-haiku-20240307" :platform "Anthropic" :name "Claude 3 Haiku"  :price-in 0.25 :price-out 1.25 :parameters "?" :model-type "cloud"}])
 
 ;; A wrapper function to check which api to use
 ;; TODO: add in system prompt as option
