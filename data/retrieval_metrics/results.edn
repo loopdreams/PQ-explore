@@ -1,0 +1,117 @@
+[{:recall 1.0,
+  :precision 0.04568528,
+  :IoU 0.02970297,
+  :label "Chunks-3"}
+ {:recall 0.41666666,
+  :precision 0.042735044,
+  :IoU 0.01923077,
+  :label "Chunks-3"}
+ {:recall 1.0, :precision 0.125, :IoU 0.06465517, :label "Chunks-3"}
+ {:recall 1.0,
+  :precision 0.09803922,
+  :IoU 0.065789476,
+  :label "Chunks-3"}
+ {:recall 0.72727275,
+  :precision 0.07619048,
+  :IoU 0.034632035,
+  :label "Chunks-3"}
+ {:recall 1.0,
+  :precision 0.043269232,
+  :IoU 0.028571429,
+  :label "Chunks-5"}
+ {:recall 0.41666666,
+  :precision 0.029411765,
+  :IoU 0.01305483,
+  :label "Chunks-5"}
+ {:recall 1.0,
+  :precision 0.07692308,
+  :IoU 0.042134833,
+  :label "Chunks-5"}
+ {:recall 1.0,
+  :precision 0.060728744,
+  :IoU 0.038071066,
+  :label "Chunks-5"}
+ {:recall 0.8181818,
+  :precision 0.05263158,
+  :IoU 0.026946107,
+  :label "Chunks-5"}
+ {:recall 0.33333334,
+  :precision 0.009063444,
+  :IoU 0.005444646,
+  :label "Chunks-10"}
+ {:recall 1.0,
+  :precision 0.039087947,
+  :IoU 0.01775148,
+  :label "Chunks-10"}
+ {:recall 1.0,
+  :precision 0.05033557,
+  :IoU 0.023364486,
+  :label "Chunks-10"}
+ {:recall 1.0,
+  :precision 0.040983606,
+  :IoU 0.022421524,
+  :label "Chunks-10"}
+ {:recall 0.72727275,
+  :precision 0.028268551,
+  :IoU 0.011661808,
+  :label "Chunks-10"}
+ {:recall 0.33333334,
+  :precision 0.0074626864,
+  :IoU 0.004497751,
+  :label "Chunks-15"}
+ {:recall 1.0,
+  :precision 0.032967035,
+  :IoU 0.011684518,
+  :label "Chunks-15"}
+ {:recall 1.0,
+  :precision 0.02970297,
+  :IoU 0.014464802,
+  :label "Chunks-15"}
+ {:recall 1.0,
+  :precision 0.036585364,
+  :IoU 0.019455252,
+  :label "Chunks-15"}
+ {:recall 1.0,
+  :precision 0.03405573,
+  :IoU 0.013546798,
+  :label "Chunks-15"}
+ {:recall 1.0,
+  :precision 0.023622047,
+  :IoU 0.013867488,
+  :label "Full Docs"}
+ {:recall 1.0,
+  :precision 0.028436018,
+  :IoU 0.00949367,
+  :label "Full Docs"}
+ {:recall 1.0,
+  :precision 0.025996534,
+  :IoU 0.012427506,
+  :label "Full Docs"}
+ {:recall 1.0,
+  :precision 0.036585364,
+  :IoU 0.019455252,
+  :label "Full Docs"}
+ {:recall 1.0,
+  :precision 0.025114154,
+  :IoU 0.0102325585,
+  :label "Full Docs"}
+ {:recall 1.0,
+  :precision 0.027227722,
+  :IoU 0.012061403,
+  :label "Question Method"}
+ {:recall 1.0,
+  :precision 0.028571429,
+  :IoU 0.015576324,
+  :label "Question Method"}
+ {:recall 1.0,
+  :precision 0.053380784,
+  :IoU 0.035885166,
+  :label "Question Method"}
+ {:recall 1.0,
+  :precision 0.02970297,
+  :IoU 0.014760148,
+  :label "Question Method"}
+ {:recall 1.0,
+  :precision 0.028213166,
+  :IoU 0.013782542,
+  :label "Question Method"}]
