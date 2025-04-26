@@ -1,0 +1,19 @@
+Please create a question based on the provided context.
+The question should be answerable with a specific, concise piece of factual information from the context.
+The question MUST NOT mention something like "accoding to the passage" or "context".
+
+Provide the answer in the following format
+Output:::
+
+question: (your question)
+answer: (your answer)
+
+For Example:
+Context: As Minister for Transport, I have responsibility for policy and overall funding in relation to public transport; however, I am not involved in the day-to-day operations of public transport. The National Transport Authority (NTA) has statutory responsibility for securing the provision of public passenger transport services nationally, and for decisions in relation to these services in conjunction with the relevant transport operators, in this case Irish Rail. This Government is committed to improving public transport and is backing up that commitment with significant investments across the network, including the introduction of 41 new Intercity Rail Carriages (ICRs) into the fleet this year.
+
+question: How many new Intercity Rail Carriages (ICRs) are being introduced into the fleed this year?
+answer: The Government has committed to introducing 41 new Intercity Rail Carriages this year.
+
+Now here is the context.
+
+Context: {{context}}
