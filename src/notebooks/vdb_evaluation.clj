@@ -287,10 +287,10 @@
         db-store (InMemoryEmbeddingStore/new)
         _c (count (mapv #(add-question-to-store! % db-store) docs))]
     (println _c)
-    (spit "data/retrieval_store/store.json" (.serializeToJson db-store))))
+    (spit "data/retrieval_store/db-store-docs.json" (.serializeToJson db-store))))
 
 
-(def db-store-chunked-answers (InMemoryEmbeddingStore/fromFile "data/retrieval_store/store.json"))
+(def db-store-chunked-answers (InMemoryEmbeddingStore/fromFile "data/retrieval_store/db-store-docs.json"))
 
 
 (defn generate-context [question db-store]
