@@ -1,3 +1,4 @@
+;; # Generation Evaluation
 (ns notebooks.rag-evaluation
   (:require [libpython-clj2.require :refer [require-python]]
             [libpython-clj2.python :refer [py..] :as py]
@@ -14,55 +15,14 @@
             [notebooks.vdb-evaluation :as vdb])
   (:import
    (dev.langchain4j.data.segment TextSegment)
-   (dev.langchain4j.model.openai OpenAiEmbeddingModel)
    (dev.langchain4j.store.embedding CosineSimilarity)
-   (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
    (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
 
 
-;; **NOTE!**
-;; This section uses clojure-python interop. In order for it to load properly,
-;; you'll have to set up libpython-clj2 with your editor and install the
-;; relevant python dependencies seperately.
-;;
-;; TODO: test this with a fresh clone of repo
-;; In terms of the python dependencies, the follow should be all that is needed:
-;;
-;; `python3 -m pip install continuous-eval`
-;;
-;; In my case, I set up a python virtual environment to install this, and then created
-;; a file under 'dev/user.clj' file that is automatically run by emacs/cider when starting a REPL.
-;; Inside this file is just the 'initialize!' function provided by libpython-clj2.python namespace,
-;; which takes a path to a :python-executable and a :library-path
-
-;; Install:
-;; - python3 -m pip install continuous-eval
-;; - pip3 install torch torchvision torchaudio
-;; - pip3 install pandas
-;; (pytorch/pandas needed for semantic metrics)
-;;
-;; Available metrics:
-;; - Deterministic
-;;  - DeterministicAnswerCorrectness - requires ground truth answers
-;;  - DeterministicFaithfulness
-;;  - FleschKincaidReadability
-;; - Llm-based
-;;  - AnswerCorrectness
-;;  - AnswerRelevance
-;;  - Faithfulness
-;;  - StyleConsistency
-;; - Semantic
-;;  - BertAnswerRelevance
-;;  - BertAnswerSimilarity
-;;  - DebertaAnswerScores
-
-;; # Rag Evaluation
-;;
-;; ## Overview
 ;; For this section, I will be relying heavily on the [continuous-eval (python)](https://github.com/relari-ai/continuous-eval)
 ;; metrics and approach for starting to think about how to evaluate the RAG.
 ;;
-;; That repo also has some great links to articles explaining some of the
+;; That repository also has some great links to articles explaining some of the
 ;; concepts in more detail.
 ;;
 ;; As the creators of the project write, there are several kinds of questions
@@ -80,41 +40,44 @@
 
 ;; ([source](https://blog.relari.ai/a-practical-guide-to-rag-evaluation-part-2-generation-c79b1bde0f5d))
 ;;
-;; In this exercises, I will only really look at the question of what llm
+;; In this exercise, I will only really look at the question of what llm
 ;; **model** might work best with the data that I have and the prompt/retrieval
 ;; framework we have already set up.
 ;;
-;; We will focus on two categories of metric:
+;; We will focus on three categories of metrics:
 ;;
 ;; - Deterministic
+;;
+;; - Semantic
 ;;
 ;; - LLM-based
 ;;
 ;; Deterministic metrics are similar to how we measured the retrieval
-;; performace; they simple measure the *token overlap* between answers generated
+;; performace; they simply measure the *token overlap* between answers generated
 ;; by the LLM and some kind of reference/ground-truth answers.
+;;
+;; The semantic metric is similar to the method of retrieving information from
+;; the vector database; it checks how similar two pieces of text are based on
+;; vector embeddings.
 ;;
 ;; LLM-based metrics utilise another LLM to assign a score to the output. For
 ;; example, to determine 'answer-correctness', we will ask an LLM to assign a
 ;; score between 1-5 to a generated answer, based on reference answers that we
 ;; provide ourselves.
 ;;
-;; Before going into the metrics further, we will first create:
+;; ## Evaluation Dataset
 ;;
-;; - A testing dataset, contining some questions and ground truth answers
+;; Before going into the metrics further, we will first create a testing dataset
+;; that contains some questions and ground truth answers. I've used 10 fairly
+;; random questions based on some of the material in the starting dataset of
+;; questions and answers.
 ;;
-;; - Some generated LLM responses by different models, using the questions from
-;;   the testing dataset
-;;
-;; For the testing dataset, I've used 10 fairly random questions based on some
-;; of the material in the starting dataset of questions and answers. It is saved
-;; in a 'questions.edn' file in this project.
-;;
-;; Ideally, we would use a much larger and more thoughfully curated evaluation
+;; Ideally, we would use a much larger and more thoughtfully curated evaluation
 ;; dataset, perhaps with input from domain experts across different question areas.
 ;; The goal here, however, is simply to test out some evaluation workflows in
-;; clojure, so a basic evaluation dataset will have to do for now. Below, we
-;; just load that dataset. The 'questions.edn' file is set up as a clojure map,
+;; clojure, so a basic evaluation dataset will have to do for now.
+;;
+;; Below, we just load that dataset. The 'questions.edn' file is set up as a clojure map,
 ;; where the questions are keys and the ground truth answers and values.
 
 
@@ -130,8 +93,13 @@
 
 (kind/table evaluation-dataset)
 
+;; ## Generate LLM Answers
+;;
 ;; Next, we will write a helper function to save llm responses and generate some
-;; responses by different llm models.
+;; responses by different llm models. These are the responses that we will
+;; evaluate later. As you can see below, I tested 20 different models. Some were
+;; locally running small models (around 8B parameters max), and some were
+;; cloud-based models from Google, OpenAI and Anthropic.
 
 (defn ask-llm-save-responses! [model questions]
   (let [responses (reduce (fn [res question]
@@ -159,12 +127,12 @@
   (ask-llm-save-responses! "mistral" evaluation-dataset)
   (ask-llm-save-responses! "llava" evaluation-dataset)
   (ask-llm-save-responses! "deepseek-r1" evaluation-dataset)
-  (ask-llm-save-responses! "gemma3:4b" evaluation-dataset)
+  (ask-llm-save-responses! "gemma3:4b" evaluation-dataset) ;x
   (ask-llm-save-responses! "granite3.2" evaluation-dataset)
-  (ask-llm-save-responses! "gemini-2.5-pro-preview-03-25" evaluation-dataset)
+  (ask-llm-save-responses! "gemini-2.5-pro-preview-03-25" evaluation-dataset) ;x
   (ask-llm-save-responses! "gemini-2.5-flash-preview-04-17" evaluation-dataset))
 
-(def responses-ds
+(defonce responses-ds
   (let [responses-dir "data/responses"
         responses (->> responses-dir
                        (io/file)
@@ -176,19 +144,23 @@
 
 (tc/row-count responses-ds)
 
+;; Each model answered the 10 questions from the evaluation dataset, so that's
+;; 200 responses overall.
+
 ;; ## Continuous Eval Metrics Functions
 ;;
 ;; Below, I am just creating a wrapper for the Continuous-eval deterministic
 ;; metrics, and re-writing the LLM metrics in clojure, using the
 ;; [prompt templates that are provided in the continuous-eval repo](https://github.com/relari-ai/continuous-eval/tree/main/continuous_eval/metrics/generation/text/prompts)
 ;;
-;; For demonstrating how the metrics work, we will use a couple of the generated responses as samples.
+;; For demonstrating how the metrics work, we will use a couple of the generated
+;; responses as samples.
 ;;
-;; For the question "How many households were in reciept of HAP payments in
+;; For the question "How many households were in receipt of HAP payments in
 ;; 2023?", the data available states that 57,617 households were in receipt of
 ;; payments at the end of **Q3 2023**. In other words, the full data for 2023
 ;; was not available at that time. Most of the models seemed to be able to pick
-;; up that detail, but one of the lower-powered ones, gemma3(1 billion param
+;; up that detail, but one of the lower-powered ones, gemma3(1 billion parameter
 ;; model) didn't qualify the figure to state that it was only for Q3.
 ;;
 ;; Also, the question "Are there plans to further reduce public transport fares?"
@@ -207,7 +179,7 @@
     (kind/table))
 
 
-;
+
 ;; ### Deterministic Metrics
 
 (require-python '[continuous_eval.metrics.generation.text.deterministic :as det])
@@ -251,12 +223,12 @@
     (kind/table))
 
 ;; The 'F1' scores are the combination of 'precision' and 'recall' metrics. As
-;; we saw in previous sections, precision is how much of the generated asnwer is
-;; reflected in the ground truth (i.e., what % of the generated answer is
+;; we saw in previous sections, precision is how much of the generated answer is
+;; reflected in the ground truth (i.e., what % of the generated answer is not
 ;; 'superfluous'), and recall is how much of the ground truth is reflected in
 ;; the generated answer. The F1 score is the harmonic mean of both these scores,
 ;; with a score closer to 1 being better. The 'BLEU' score is also better when
-;; it is closer to 1
+;; it is closer to 1.
 ;;
 ;; In this case, even though these metrics don't check for semantic meaning or
 ;; logic, the metrics do indicate that the llama3.1 responses were slightly
@@ -291,9 +263,29 @@
                           :ground-truth ["The capital of France is Paris."
                                          "The Mona Lisa is in Paris."]})
 
+(-> (mapv add-semantic-similarity (tc/rows sample-gen-responses :as-maps))
+    (tc/dataset)
+    (tc/select-columns [:model-ref :question :answer :cosine-similarity])
+    (kind/table))
+
+;; We can see a limitation with this metric here - even though the last
+;; gemma3:1b answer is factually inccorrect, it still is quite 'semantically
+;; similar' to the ground truth answer.
 
 
 ;; ### LLM Metrics
+;;
+;; As I mentioned above, I'm using the same approach/prompts for the LLM-based
+;; metrics as is used in the continuous-eval project.
+;;
+;; For example, the 'faithfulness' prompt can be seen below:
+
+(-> "prompts/faithfulness_sys.txt"
+    slurp
+    (str/replace #"\n" "\n\n")
+    (gen/quoted-response)
+    kind/md)
+
 
 (defn add-llm-metric-correctness-score [{:keys [question answer ground-truth] :as rag-data} llm-model]
   (let [system-prompt (slurp "prompts/ans_correctness_sys.txt")
@@ -301,7 +293,9 @@
                           slurp
                           (templates/render {:question     question
                                              :answer       answer
-                                             :ground-truth (if (seq ground-truth) ground-truth (:retrieved-context rag-data))}))
+                                             :ground-truth (if (seq ground-truth)
+                                                             ground-truth
+                                                             (:retrieved-context rag-data))}))
         response      (llm/ask-llm
                        {:model-ref     llm-model
                         :question      user-prompt
@@ -352,14 +346,18 @@
       (add-llm-metric-relevance-score model)
       (assoc :evaluator-model model)))
 
+;; Finally, let's wrap all of the above three metric types (deterministic,
+;; semantic, and llm-based) into a single function.
 
-(defn add-all-generation-evaluation-metrics [responses model]
+(defn add-all-generation-evaluation-metrics [responses evaluation-model]
   (mapv (fn [resp]
           (-> resp
               add-deterministic-metrics
               add-semantic-similarity
-              (add-llm-metrics model)))
+              (add-llm-metrics evaluation-model)))
         responses))
+
+;; Now, let's use these metrics to evaluate the two example question/answers we genreated earlier.
 
 (comment
   (let [eval-model "gpt-4o"
@@ -378,6 +376,9 @@
     (tc/dataset)
     (tc/select-columns [:model-ref :question :answer :metric-llm-faithfulness-score :metric-llm-faithfulness-explanation])
     (kind/table))
+
+;; As we can see, the evaluation model correctly identified the errors in the
+;; gemma3:1b answers.
 
 ;; Example LLM Correctness evaluation (range between 1 and 5):
 
@@ -414,10 +415,16 @@
     (mapv #(run-and-save-evaluation-metrics! % model) responses)))
 
 (comment
-  ;; 43:55 (very roughly) to run around 15
+  ;; 43:55 (very roughly) to run around 15 models
   ;; cost - around 1.44 USD for 18 models * 10 questions each - 180 evaluations
   (run-and-save-all-evals! "data/responses" "o4-mini-2025-04-16"))
 
+;; ## Exploring Performance
+
+;; In this part we'll try to compare the 20 models based on their performance
+;; across the metrics.
+;;
+;; We'll start be defining a few helper functions.
 
 (defn average-coll [coll]
   (float
@@ -449,8 +456,9 @@
                        (mapv summarise-model-performance-avgs))]
     (apply tc/concat responses)))
 
-(kind/table
- (build-responses-eval-ds-avgs "data/responses_evaluation"))
+(def ds-performance-averages (build-responses-eval-ds-avgs "data/responses_evaluation"))
+
+(kind/table ds-performance-averages)
 
 (defn concat-responses-eval-data [responses-eval-dir]
   (let [responses (->> responses-eval-dir
@@ -460,6 +468,15 @@
                        (mapv (comp edn/read-string slurp)))]
     (reduce into responses)))
 
+(defn add-model-platform [ds]
+  (-> ds
+      (tc/map-columns :platform [:model-ref]
+                      (fn [m]
+                        (->
+                         (filter #(= (:model-ref %) m) llm/llm-models)
+                         first
+                         :platform)))))
+
 (defn concat-responses-eval-ds-narrowed [responses-eval-dir]
   (let [ds (tc/dataset (concat-responses-eval-data responses-eval-dir))]
     (-> ds
@@ -468,16 +485,19 @@
           (tc/column-names ds :type/numerical)
           [:model-ref :question])))))
 
-;; ## Comparing the Metrics
 
 (def responses-eval-data (concat-responses-eval-data "data/responses_evaluation"))
-(def responses-eval-ds-narrowed (concat-responses-eval-ds-narrowed "data/responses_evaluation"))
+(def ds-responses-eval-narrowed (concat-responses-eval-ds-narrowed "data/responses_evaluation"))
 
 
 (defn make-boxplot [metric]
   (->
-   responses-eval-ds-narrowed
+   ds-responses-eval-narrowed
+   add-model-platform
    (tc/order-by :model-ref)
+   (plotly/base
+    {:=width 800
+     :=color :platform})
    (plotly/layer-boxplot
     {:=x :model-ref
      :=y metric})))
@@ -486,30 +506,9 @@
 ;; #### Reading Ease
 ;;
 ;; The `flesch-kincaid-grade-level` and `flesch-reading-ease` metrics help show
-;; how readible the response is. A lower grade level and higher reading ease
-;; level makes the text more readible.
+;; how readable the response is. A lower grade level and higher reading ease
+;; level makes the text more readable.
 ;;
-;; As a reference, let's calculate the avereage grade-level and reading-ease
-;; for the actual responses provided by departments.
-
-(def reading-scores
-  (->> (:answer (tc/drop-missing ds :answer))
-       (mapv #(py.. (det/FleschKincaidReadability) (compute %)))
-       (mapv vals)))
-
-;; Reading Ease Average
-(def baseline-reading-ease
-  (average-coll (map first reading-scores)))
-
-baseline-reading-ease
-
-;; Grade Level Average
-(def baseline-grade-level
-  (average-coll (map second reading-scores)))
-
-baseline-grade-level
-
-;; These scores indicate that the pre-exiting answers are quite difficult to read.
 
 (make-boxplot :flesch-reading-ease)
 
@@ -545,89 +544,52 @@ baseline-grade-level
 
 ;; #### Precision
 
-(def precision-grouped-by-question
-  (-> responses-eval-ds-narrowed
-      (tc/select-columns [:question :model-ref :rouge-l-precision :token-overlap-precision])
-      (tc/group-by :question)
-      :data))
+(-> ds-performance-averages
+    add-model-platform
+    (plotly/base
+     {:=width 800
+      :=color :platform
+      :=x :model-ref})
+    (plotly/layer-bar
+     {:=y :token-overlap-precision})
+    (plotly/layer-bar
+     {:=y :rouge-l-precision}))
 
 
 
-(defn graph-group [ds key]
-  (-> (tc/order-by ds key)
-      (plotly/base
-       {:=x :model-ref
-        :=title (first (:question ds))})
-      (plotly/layer-line
-       {:=y key})
-      (plotly/layer-line
-       {:=y :token-overlap-precision})))
+;; #### Recall
 
-(map #(graph-group % :rouge-l-precision) precision-grouped-by-question)
+(-> ds-performance-averages
+    add-model-platform
+    (plotly/base
+     {:=width 800
+      :=color :platform
+      :=x :model-ref})
+    (plotly/layer-bar
+     {:=y :token-overlap-recall})
+    (plotly/layer-bar
+     {:=y :rouge-l-recall}))
 
 
-;; Recall
+;; #### Precision/Recall (F1)
 
-(def recall-grouped
-  (-> responses-eval-ds-narrowed
-      (tc/select-columns [:question :model-ref :rouge-l-recall :token-overlap-recall])
-      (tc/group-by :question)
-      :data))
+(-> ds-performance-averages
+    add-model-platform
+    (plotly/base
+     {:=width 800
+      :=color :platform
+      :=x :model-ref})
+    (plotly/layer-bar
+     {:=y :rouge-l-f1}))
 
-(map (fn [ds]
-       (->
-        (tc/order-by ds :rouge-l-recall)
-        (plotly/base
-         {:=x :model-ref
-          :=title (first (:question ds))
-          :=width 800})
-        (plotly/layer-line
-         {:=y :rouge-l-recall})
-        (plotly/layer-line
-         {:=y :token-overlap-recall})))
-     recall-grouped)
-
-;; Precision/Recall
-
-(def multiple-grouped
-  (-> responses-eval-ds-narrowed
-      (tc/order-by :model-ref)
-      (tc/group-by :question)
-      :data))
-
-(map (fn [ds]
-       (-> ds
-           (plotly/base
-            {:=x :model-ref
-             :=title (first (:question ds))
-             :=width 800})
-           (plotly/layer-bar
-            {:=y :bleu-score})
-           (plotly/layer-bar
-            {:=y :rouge-l-f1})
-           (plotly/layer-bar
-            {:=y :token-overlap-f1})))
-     multiple-grouped)
-
-(defn add-model-detail [ds detail]
-  (-> ds
-      (tc/map-columns detail [:model-ref]
-                      (fn [m]
-                        (->
-                         (filter (fn [m1] (= m (:model-ref m1))) llm/llm-models)
-                         first
-                         detail)))))
-
-(->
- (build-responses-eval-ds-avgs "data/responses_evaluation")
- (add-model-detail :platform)
- (tc/order-by :rouge-l-f1)
- (plotly/base
-  {:=width 800})
- (plotly/layer-bar
-  {:=x :model-ref
-   :=y :rouge-l-f1
-   :=color :platform}))
+(-> ds-performance-averages
+    add-model-platform
+    (plotly/base
+     {:=width 800
+      :=color :platform
+      :=x :model-ref})
+    (plotly/layer-bar
+     {:=y :token-overlap-f1}))
 
 
 ;; ### LLM Generated Metrics
@@ -635,8 +597,12 @@ baseline-grade-level
 
 (defn make-bar-avgs [metric]
   (->
-   (build-responses-eval-ds-avgs "data/responses_evaluation")
+   ds-performance-averages
+   add-model-platform
    (tc/order-by metric)
+   (plotly/base
+    {:=width 800
+     :=color :platform})
    (plotly/layer-bar
     {:=x :model-ref
      :=y metric})))
@@ -653,27 +619,16 @@ baseline-grade-level
 (make-bar-avgs :metric-llm-relevance-score)
 
 
-;; #### Single Model Scores
-
-;; Matrix:
-;;              Score | Average (all models) |
-;; Recall     |
-;; Precision
-;; Faithfulness
-;; Correctness
-;; Relevance
+;; ### Individual Performances
 ;;
-;; TODO: calculate baseline averages
-;; - across score
-;; - per question
-
-;; Most important metrics
-;; Faithfulness
-;; Correctness
-;; Relevance
-;; Semantic similarity
-;; Recall
-;; Precision
+;; Let's make a simple 'dashboard' type view to try to get a sense of each
+;; model's performance at a glance.
+;;
+;; We'll introduce an 'indicator' marker to show if the model is performing okay
+;; for a metric. Perhaps in an actual evaluation system this could be some kind
+;; of target threshold that the model should meet. In this case, we'll just use
+;; the averages of all the model performances, so that the indicator will simply
+;; indicate if the metric is above/below average.
 
 (defn average-score [ds metrics]
   (->>
@@ -696,14 +651,26 @@ baseline-grade-level
       (tc/rows :as-maps)
       first))
 
-(def eval-averages-all (eval-averages responses-eval-ds-narrowed))
+(def eval-averages-all (eval-averages ds-responses-eval-narrowed))
 
 (defn indicator-symbol [colour]
   [:span {:style (str "color: " colour ";")} "&#11044"])
 (def indicator-bad (indicator-symbol "red"))
 (def indicator-medium (indicator-symbol "yellow"))
 (def indicator-good (indicator-symbol "green"))
-;; Start with table
+
+;; If above target - green
+;; If within less than 10% of target - amber
+;; If less than 10% target - red
+;;
+(defn make-indicator-symbol [value target-value]
+  (if (> value target-value) indicator-good
+      (let [diff (abs (- target-value value))
+            diff-percent (float (/ diff target-value))]
+        (if (<= diff-percent 0.1)
+          indicator-medium
+          indicator-bad))))
+
 (defn model-performance-summary [ds model-ref]
   (let [model-per       (filter #(= (:model-ref %) model-ref) ds)
         faithfulness    (count (filter #(= (:metric-llm-faithfulness-score %) 1) model-per))
@@ -713,11 +680,11 @@ baseline-grade-level
                 semantic-similarity
                 recall
                 precision
-                f1]} (-> model-per (tc/dataset) eval-averages)]
+                f1]} (-> model-per tc/dataset eval-averages)]
     [:div
      [:h1 (name model-ref)]
      [:p (str "Scores based on " total-questions " evaluation questions.")]
-     [:table {:style "width: 100%;"}
+     [:table {:style "width: 70%;"}
       [:tr
        [:th "Metric"]
        [:th "Score"]
@@ -727,89 +694,55 @@ baseline-grade-level
        [:td "Faithfulness"]
        [:td (str faithfulness "/" total-questions)]
        [:td (:faithfulness eval-averages-all)]
-       [:td (condp < faithfulness
-              9 indicator-good
-              7 indicator-medium
-              indicator-bad)]]
+       [:td (make-indicator-symbol (/ faithfulness total-questions) (:faithfulness eval-averages-all))]]
       [:tr
        [:td "Correctness"]
        [:td correctness]
        [:td (:correctness eval-averages-all)]
-       [:td (condp < correctness
-              3 indicator-good
-              2 indicator-medium
-              indicator-bad)]]
+       [:td (make-indicator-symbol correctness
+                                   (:correctness eval-averages-all))]]
       [:tr
        [:td "Relevance"]
        [:td relevance]
-       [:td (:correctness eval-averages-all)]
-       [:td (condp < relevance
-              2 indicator-good
-              1 indicator-medium
-              indicator-bad)]]
+       [:td (:relevance eval-averages-all)]
+       [:td (make-indicator-symbol relevance
+                                   (:relevance eval-averages-all))]]
       [:tr
        [:td "Semantic Similarity"]
        [:td semantic-similarity]
        [:td (:semantic-similarity eval-averages-all)]
-       [:td (condp < semantic-similarity
-              0.85 indicator-good
-              0.75 indicator-medium
-              indicator-bad)]]
+       [:td (make-indicator-symbol semantic-similarity
+                                   (:semantic-similarity eval-averages-all))]]
       [:tr
        [:td "Recall"]
        [:td recall]
        [:td (:recall eval-averages-all)]
-       [:td (condp < recall
-              0.85 indicator-good
-              0.75 indicator-medium
-              indicator-bad)]]
+       [:td (make-indicator-symbol recall
+                                   (:recall eval-averages-all))]]
       [:tr
        [:td "Precision"]
        [:td precision]
        [:td (:precision eval-averages-all)]
-       [:td (condp < precision
-              0.26 indicator-good
-              0.22 indicator-medium
-              indicator-bad)]]
+       [:td (make-indicator-symbol precision
+                                   (:precision eval-averages-all))]]
       [:tr
        [:td "F1"]
        [:td f1]
        [:td (:f1 eval-averages-all)]
-       [:td (condp < f1
-              0.35 indicator-good
-              0.25 indicator-medium
-              indicator-bad)]]]]))
-
+       [:td (make-indicator-symbol f1
+                                   (:f1 eval-averages-all))]]]]))
 
 
 (mapv #(kind/hiccup (model-performance-summary responses-eval-data %))
      (distinct (map :model-ref responses-eval-data)))
 
-;; Precision/word-count
 
-(-> responses-eval-data
-    (tc/dataset)
-    (tc/select-columns [:answer :rouge-l-precision :token-overlap-precision])
-    (tc/map-columns :wc [:answer] (fn [a]
-                                    (count
-                                     (str/split a #"\w+"))))
-    (plotly/base
-     {:=x :wc})
-    (plotly/layer-point
-     {:=y :rouge-l-precision})
-    (plotly/layer-point
-     {:=y :token-overlap-precision}))
-
-(-> responses-eval-data
-    (tc/dataset)
-    (tc/select-columns [:model-ref :answer :rouge-l-precision :token-overlap-precision])
-    (tc/map-columns :wc [:answer] (fn [a]
-                                    (count
-                                     (str/split a #"\w+"))))
-    (tc/order-by :wc :desc)
-    (tc/select-rows (range 1)))
-
-;; Which question has the most wrong (non-faithfull) answers?
+;; ### Evaluating the Evaluation Dataset
+;;
+;; As a last step, let's have a quick look to see if the metrics can tell us
+;; anything about our evaluation dataset itself.
+;;
+;; For example, qhich question has the most wrong (non-faithfull) answers?
 
 (-> responses-eval-data
     (tc/dataset)
@@ -819,7 +752,11 @@ baseline-grade-level
     (tc/aggregate {:total-correct #(apply + (% :metric-llm-faithfulness-score))})
     (tc/order-by :total-correct))
 
-;; Let's look at a couple of examples/evaluation resoning for the lowest-scoring question
+;; The question about healthcare assistants only had 11/20 correct answers. This
+;; is unsurprising in retrospect, as even I had trouble understanding this
+;; original question/answer.
+;;
+;; Let's look at a couple of examples/evaluation reasoning for the lowest-scoring question
 
 (-> responses-eval-data
     (tc/dataset)
@@ -834,7 +771,7 @@ baseline-grade-level
 ;; available" which should be an acceptable answer in this context (since the
 ;; prompt instructs is that it should provide this default if it can't answer)
 ;;
-;; Therefore, for the evaluation prompt, this detail should be added (for
-;; example, by also providing the full prompt given to the model)
+;; I went back and added an extra instruction in the prompt to try account for
+;; these cases. But, it's an important lesson in trying to think logically about
+;; the material in the prompts.
 
-;; TODO: maybe re-run the tests again to show this difference.
