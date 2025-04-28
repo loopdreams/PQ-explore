@@ -22,8 +22,8 @@
 ;;
 ;; ## Context Prompt
 
-(defn add-context [{:keys [question] :as rag-data} db-store]
-  (let [ctx (mapv :text (vdb/generate-context question db-store))]
+(defn add-context [{:keys [question] :as rag-data} db-store-name]
+  (let [ctx (mapv :text (vdb/generate-context question db-store-name))]
     (assoc rag-data :retrieved-context ctx)))
 
 (defn add-pq-prompt [{:keys [retrieved-context] :as rag-data}]
@@ -47,7 +47,7 @@ then reply with \"I am unable to answer this question with the information I hav
 
 (kind/md
  (-> {:question sample-question}
-     (add-context vdb/db-store-chunked-answers)
+     (add-context :db-docs)
      add-pq-prompt
      :system-prompt
      quoted-response))
@@ -66,7 +66,7 @@ then reply with \"I am unable to answer this question with the information I hav
   (spit "data/generation_examples/example_1.txt"
         (-> {:question sample-question
              :model-ref "gpt-3.5-turbo"}
-            (add-context vdb/db-store-chunked-answers)
+            (add-context :db-docs)
             add-pq-prompt
             add-llm-response
             :answer)))
@@ -86,7 +86,7 @@ then reply with \"I am unable to answer this question with the information I hav
   (spit "data/generation_examples/example_2.txt"
         (-> {:question sample-question-broad
              :model-ref "gpt-3.5-turbo"}
-            (add-context vdb/db-store-chunked-answers)
+            (add-context :db-docs)
             add-pq-prompt
             add-llm-response
             :answer))
@@ -94,7 +94,7 @@ then reply with \"I am unable to answer this question with the information I hav
   (spit "data/generation_examples/example_3.txt"
         (-> {:question sample-question-detail
              :model-ref "gpt-3.5-turbo"}
-            (add-context vdb/db-store-chunked-answers)
+            (add-context :db-docs)
             add-pq-prompt
             add-llm-response
             :answer)))
@@ -112,9 +112,9 @@ then reply with \"I am unable to answer this question with the information I hav
 
 ;; Putting these together into single function:
 
-(defn get-rag-answer [rag-data db-store]
+(defn get-rag-answer [rag-data db-store-name]
   (-> rag-data
-      (add-context db-store)
+      (add-context db-store-name)
       add-pq-prompt
       add-llm-response))
 
@@ -136,8 +136,8 @@ then reply with \"I am unable to answer this question with the information I hav
        (str/join "\n\n- "
                  links)))
 
-(defn generate-answer-with-references [rag-data db-store]
-  (let [rag-data (get-rag-answer rag-data db-store)
+(defn generate-answer-with-references [rag-data db-store-name]
+  (let [rag-data (get-rag-answer rag-data db-store-name)
         ctx-docs (:retrieved-context rag-data)
         docs-ref-links (format-links-md (mapv get-reference-link-for-doc ctx-docs))]
     (str (:answer rag-data) "\n\n" docs-ref-links)))
@@ -146,7 +146,7 @@ then reply with \"I am unable to answer this question with the information I hav
   (spit "data/generation_examples/example_4.txt"
         (-> {:question sample-question
              :model-ref "gpt-3.5-turbo"}
-            (generate-answer-with-references vdb/db-store-chunked-answers))))
+            (generate-answer-with-references :db-docs))))
 
 (-> "data/generation_examples/example_4.txt"
     slurp

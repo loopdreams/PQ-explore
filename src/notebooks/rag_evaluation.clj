@@ -104,7 +104,7 @@
 (defn ask-llm-save-responses! [model questions]
   (let [responses (reduce (fn [res question]
                             (conj res (gen/get-rag-answer (assoc question :model-ref model)
-                                                          vdb/db-store-chunked-answers)))
+                                                          :db-docs)))
                           [] questions)
         f-name (str "data/responses/" model "_responses.edn")]
     (spit f-name responses)))

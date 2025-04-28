@@ -9,12 +9,9 @@
    [notebooks.llm-api :as llm]
    [notebooks.preparation :refer [ds]]
    [notebooks.rag-evaluation
-    :refer [add-all-generation-evaluation-metrics model-performance-summary average-coll build-responses-eval-ds-avgs]]
+    :refer [add-all-generation-evaluation-metrics average-coll build-responses-eval-ds-avgs]]
    [notebooks.tokenizer :as tokenizer]
-   [notebooks.vdb-evaluation
-    :as vdb-eval
-    :refer [db-store-chunked-answers generate-context]]
-   [notebooks.vector-database :refer [db-store-questions]]
+   [notebooks.vdb-evaluation :as vdb-eval]
    [scicloj.kindly.v4.kind :as kind]
    [scicloj.tableplot.v1.plotly :as plotly]
    [selmer.parser :as templates]
@@ -143,9 +140,9 @@
 ;; changes to the prompt. I'll mainly drop the word 'please' and also refer to
 ;; the question-asker as a 'user' as opposed to a 'citizen'.
 
-(defn get-rag-answer-alt-prompt [rag-data db-store add-prompt-fn]
+(defn get-rag-answer-alt-prompt [rag-data db-store-name add-prompt-fn]
   (-> rag-data
-      (gen/add-context db-store)
+      (gen/add-context db-store-name)
       add-prompt-fn
       gen/add-llm-response))
 
@@ -179,12 +176,12 @@
 ;;
 ;; We will focus on varying the last two of these.
 
-(defn get-llm-responses [evaluation-dataset model db-store add-prompt-fn]
+(defn get-llm-responses [evaluation-dataset model db-store-name add-prompt-fn]
   (reduce (fn [res [question ground-truth]]
             (let [answer (get-rag-answer-alt-prompt {:question question
                                                      :model-ref model
                                                      :ground-truth ground-truth}
-                                                    db-store
+                                                    db-store-name
                                                     add-prompt-fn)]
               (conj res answer)))
           []
@@ -210,9 +207,9 @@
 
 ;; Finally, a function to put these all together.
 
-(defn generate-and-evaluate-answers [eval-dataset generation-model vector-db prompt-fn evaluation-model]
+(defn generate-and-evaluate-answers [eval-dataset generation-model vector-db-name prompt-fn evaluation-model]
   (-> eval-dataset
-      (get-llm-responses generation-model vector-db prompt-fn)
+      (get-llm-responses generation-model vector-db-name prompt-fn)
       (add-retrieval-metrics)
       (add-all-generation-evaluation-metrics evaluation-model)))
 
@@ -240,7 +237,7 @@
   (time
    (let [results (-> (generate-and-evaluate-answers evaluation-dataset-ai
                                                     generation-model
-                                                    vdb-eval/db-store-chunked-answers
+                                                    :db-docs
                                                     prompt-A-fn
                                                     evaluation-model)
                      (label-results "A1"))
@@ -252,7 +249,7 @@
   (time
    (let [results (-> (generate-and-evaluate-answers evaluation-dataset-ai
                                                     generation-model
-                                                    db-store-questions
+                                                    :question-retrieval
                                                     prompt-A-fn
                                                     evaluation-model)
                      (label-results "A2"))
@@ -264,7 +261,7 @@
   (time
    (let [results (-> (generate-and-evaluate-answers evaluation-dataset-ai
                                                     generation-model
-                                                    vdb-eval/db-store-chunked-answers
+                                                    :db-docs
                                                     prompt-B-fn
                                                     evaluation-model)
                      (label-results "B1"))
@@ -277,7 +274,7 @@
   (time
    (let [results (-> (generate-and-evaluate-answers evaluation-dataset-ai
                                                     generation-model
-                                                    db-store-questions
+                                                    :question-retrieval
                                                     prompt-B-fn
                                                     evaluation-model)
                      (label-results "B2"))
