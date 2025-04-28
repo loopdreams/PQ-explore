@@ -1,4 +1,4 @@
-;; # 6. Evaluating a Single Model Config
+;; # Evaluating a Single Model Config
 (ns notebooks.single-model-eval
   (:require
    [clojure.edn :as edn]
@@ -34,7 +34,7 @@
 ;; see if we can narrow our focus in on evaluating:
 ;;
 ;;  a. our prompt
-;;  
+;;
 ;;  b. our retrieval strategy
 ;;
 
@@ -233,6 +233,7 @@
           []
           results))
 
+
 ;; ### Running the tests
 (comment
   ;; 1. Prompt A with chunked answers ("A1")
@@ -258,7 +259,7 @@
          fname   (str "data/single_model_eval/" generation-model "_2.edn")]
      (write-rag-data! fname results)))
   ;; "Elapsed time: 785598.29325 msecs"
-  ;; 
+  ;;
   ;; 3. Prompt B with chunked answers ("B1")
   (time
    (let [results (-> (generate-and-evaluate-answers evaluation-dataset-ai
@@ -270,7 +271,7 @@
          fname   (str "data/single_model_eval/" generation-model "_3.edn")]
      (write-rag-data! fname results)))
   ;; "Elapsed time: 671342.190417 msecs"
-  ;; 
+  ;;
   ;; 4. Prompt B with question retrieval method ("B2")
   ;; "Elapsed time: 792633.33325 msecs"
   (time
@@ -311,6 +312,8 @@
 (defn pivot-chart [data]
   (-> data
       (tc/order-by :label)
+      (plotly/base
+       {:=width 800})
       (plotly/layer-bar
        {:=x :metric
         :=y :value
@@ -350,7 +353,7 @@
 
 (pivot-chart rouge-gen-metrics-chart-spec)
 
-;; ### Semantic Retrieval Metrics
+;; ### Semantic Generation Metrics
 ;; This metric shows the cosine similarity between the generated answer and the
 ;; evaluation dataset answer.
 
@@ -409,26 +412,176 @@
         :=y generation-metric
         :=color :label})))
 
+;; Let's compare the retrieval metrics to some of the generation metrics to see
+;; if there is any clear correlation.
 
 (scatter-plot-comparison ds-eval-results :retrieval-IoU :token-overlap-f1)
 
+(scatter-plot-comparison ds-eval-results :retrieval-recall :token-overlap-recall)
+
+(scatter-plot-comparison ds-eval-results :retrieval-precision :token-overlap-precision)
+
+(scatter-plot-comparison ds-eval-results :retrieval-IoU :cosine-similarity)
+
+(scatter-plot-comparison ds-eval-results :retrieval-IoU :llm-%-similarity)
 
 
 
+;; ### Example Responses
+;; #### A1 - Prompt A with chunked docs
 
-;; How to visualise?
+;; Best and worst answers by llm-metrics
+(-> ds-eval-results
+    (tc/order-by [:metric-llm-faithfulness-score
+                  :metric-llm-correctness-score
+                  :metric-llm-relevance-score]
+                 :desc)
+    (tc/select-columns [:question :answer :label])
+    (tc/select-rows (range 3)))
+
+(-> ds-eval-results
+    (tc/drop-missing :metric-llm-faithfulness-score)
+    (tc/order-by [:metric-llm-faithfulness-score
+                  :metric-llm-correctness-score
+                  :metric-llm-relevance-score])
+    (tc/select-columns [:question :answer :label :metric-llm-faithfulness-score
+                        :metric-llm-correctness-score
+                        :metric-llm-relevance-score])
+    (tc/select-rows (range 3)))
+
+;; Hmm, it seems like the 'worst performing' answers were actually honestly
+;; answered by the LLM. You can see below, that the issue was that the retrieval
+;; method didn't find the relevant information - they were all using the
+;; 'question retrieval' method.
 ;;
-;; Graph LLM metrics
-;; - x-axis: faithfulness, correctness, relevance
+;; On the one hand, we would definitely want to score these answers lower,
+;; because it is indicating a problem in the RAG chain (at the retrieval leval).
+;; However, on the other hand it might be nice to build in recognition that
+;; these answers, at least, didn't make up relevant information.
 
-;; Graph non-llm metrics
-;; - x-axis: cosine-similarity, recall, precision
+(-> ds-eval-results
+    (tc/select-rows #(= (:answer %)
+                        "I am unable to answer this question with the information I have available."))
+    (tc/select-columns [:retrieved-context :question :answer :label]))
 
-;; Graph retrieval vs others
-;; -x-axis: A, B, C ,D
-;; groups retrieveval-recall, retrieval-precision, faithfulness, f1
+;; Let's filter out these questions and see what the worst performing answers were.
 
-;; Show some sample answers
+(-> ds-eval-results
+    (tc/drop-missing :metric-llm-faithfulness-score)
+    (tc/drop-rows #(= (:answer %) "I am unable to answer this question with the information I have available."))
+    (tc/order-by [:metric-llm-faithfulness-score
+                  :metric-llm-correctness-score
+                  :metric-llm-relevance-score])
+    (tc/select-columns [:question :answer :label :metric-llm-faithfulness-score
+                        :metric-llm-correctness-score
+                        :metric-llm-relevance-score])
+    (tc/select-rows (range 3)))
+
+;; Again, these were the result of issues with the retrieval method.
+;;
+(-> ds-eval-results
+    (tc/drop-missing :metric-llm-faithfulness-score)
+    (tc/drop-rows #(= (:answer %) "I am unable to answer this question with the information I have available."))
+    (tc/select-rows #(or (= (:label %) "A1")
+                         (= (:label %) "B1")))
+    (tc/order-by [:metric-llm-faithfulness-score
+                  :metric-llm-correctness-score
+                  :metric-llm-relevance-score])
+    (tc/select-columns [:question :answer :label :metric-llm-faithfulness-score
+                        :metric-llm-correctness-score
+                        :metric-llm-relevance-score])
+    (tc/select-rows (range 3)))
+
+(-> ds-eval-results
+    (tc/select-rows #(= (:question %) "What amount was paid to recipients of the Fuel Allowance in November 2023?"))
+    (tc/select-columns [:question :answer :label :retrieved-context]))
+
+;; It seems like neither of the retrieval strategies could find the relevant
+;; information for this question.
+;;
+;; This answer does indeed exist, you can see the sentence below. I checked this
+;; in case the evaluation model had hallucianated the question/answer.  ("They
+;; are also in receipt of Fuel Allowance and were awarded the €300 Fuel Bonus
+;; and the €400 Cost of Living Bonus on 22 November 2023.")
+
+(-> ds
+    (tc/drop-missing :answer)
+    (tc/select-rows #(re-find #"fuel allowance" (str/lower-case (:answer %))))
+    (tc/select-rows #(re-find  #"November 2023" (:answer %)))
+    (tc/select-rows (range 1)))
+
+;; It seems that, although I did attempt to de-duplicate the documents in the
+;; vector store, some duplicates still made it through (it appears to be due to
+;; an extra 'space' character in one of the answers). When duplicate information
+;; is returned, it leaves less space for the potential for the target
+;; information to come through (since we only get the 5 most similar documents).
+;;
+;; To fix this we could do some more cleaning on the documents being added to
+;; the database to remove redundant/duplicate information, and also consider
+;; increaing the number of documents returned by the vector dabase (from 5 to
+;; 10, for example).
+;;
+;; We can also use these results to see what kinds of information is hard to
+;; retrieve. Let's look at some of the worst performing questions.
+;;
+;; We can see from the first 4 or so questions below, the the main issue was
+;; with not being able to retrieve the data. While, overall that is not too
+;; bad in terms of the 50 questions, it does indicate potential areas for
+;; improvement.
+
+(-> ds-eval-results
+    (tc/select-rows #(or (= (:label %) "A1")
+                         (= (:label %) "B1")))
+    (tc/group-by [:question])
+    (tc/aggregate {:avg-correct #(/ (apply + (:metric-llm-correctness-score %)) 2)
+                   :avg-relevant #(/ (apply + (:metric-llm-relevance-score %)) 2)
+                   :answer #(into [] (:answer %))
+                   :ground-truth #(first (:ground-truth %))})
+    (tc/order-by [:avg-correct :avg-relevant])
+    (tc/select-rows (range 4)))
+
+;; Number of answers where the model provided the defaul answer for not enough information available:
+
+(-> ds-eval-results
+    (tc/select-rows #(re-find #"I am unable to answer this question with the information I have available." (:answer %)))
+    (tc/group-by [:label])
+    (tc/aggregate {:num tc/row-count}))
+
+;; The question-retrieval method failed for 18/50 questions (36%) for the first
+;; prompt. The doc-retrieval method only failed for 2 of the 50 questions.
+;;
+;; However, in some of the cases, as per the prompt, the model still tries to
+;; provide whatever helpful information is available. It seems like in this
+;; cases the answers are assigned a low 'correctness' score. So, to get a better
+;; estimation of how many questions were unanswerable we could look at low
+;; correctness scores.
+
+(-> ds-eval-results
+    (tc/select-rows #(< (:metric-llm-correctness-score %) 2))
+    (tc/group-by [:label])
+    (tc/aggregate {:num tc/row-count}))
+
+;; A huge portion of the questions were incorrect for the 'question-retrieval'
+;; method (almost half). And it looks like around 6% of the doc-retrieval method
+;; questions were also incorrect.
+
+(->>
+ (-> ds-eval-results
+     (tc/select-rows #(< (:metric-llm-correctness-score %) 2))
+     :question
+     frequencies)
+ (sort-by val)
+ (reverse))
+
+;; The interesting situation here is when there is only '1' lo
+
+(-> ds-eval-results
+    (tc/select-rows #(= (:question %) "When was the Research and Innovation Bill published?"))
+    (tc/select-columns [:retrieved-context :label]))
+
+
+(-> ds-eval-results
+    (tc/map-columns :incorrect-answers []))
 
 
 ;; ## Summary

@@ -1,4 +1,4 @@
-;; # 3. Retrieval Evaluation
+;; # Retrieval Evaluation
 (ns notebooks.vdb-evaluation
   (:require [clojure.edn :as edn]
             [notebooks.preparation :refer [ds]]
@@ -8,7 +8,8 @@
             [scicloj.tableplot.v1.plotly :as plotly]
             [clojure.string :as str]
             [tablecloth.api :as tc]
-            [notebooks.vdb-evaluation :as vdb])
+            [notebooks.vdb-evaluation :as vdb]
+            [jsonista.core :as json])
   (:import
    (dev.langchain4j.data.segment TextSegment)
    (dev.langchain4j.model.openai OpenAiEmbeddingModel)
@@ -122,9 +123,10 @@
 ;; those are 1000 words long, then we are always passing the model 5000 words.
 ;; This will probably increase the chance of the target information being
 ;; present, but it will also increase the amount of superfluous information
-;; passed to the LLM (i.e.  decrease precision)
+;; passed to the LLM (i.e., decrease precision)
 ;;
-;; Therefore, we can try splitting the documents into chunks of various sizes.
+;; Therefore, it might be useful to try splitting the documents into chunks of
+;; various sizes and see which size works best.
 ;;
 ;; Below is a simple function that does this for us.
 (defn split-document [documents chunk-size]
@@ -166,7 +168,7 @@
 ;;
 ;; Both functions below are mostly identical, except the 'question method'
 ;; function adds a step from looking up an answer based on a retrieved similar
-;; question, it also re-used the previously created db-store-questions, so it
+;; question, it also re-used the previously created db-store-questions, so it's
 ;; much quicker to run.
 
 (defn calculate-metrics [questions answers chunked-docs & label]
@@ -303,6 +305,7 @@
 
 
 (def db-store-chunked-answers (InMemoryEmbeddingStore/fromFile "data/retrieval_store/db-store-docs.json"))
+
 
 ;; ### Final Checks
 ;; 

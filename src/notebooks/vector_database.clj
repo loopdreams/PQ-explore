@@ -1,4 +1,4 @@
-;; # 2. Vector Database
+;; # Vector Database
 (ns notebooks.vector-database
   (:require [tablecloth.api :as tc]
             [notebooks.preparation :refer [ds]]
@@ -58,6 +58,7 @@
 
 ;; We will first define a short function for adding a question to a memory store:
 
+;; TODO: Rename this fn to just 'add-doc-to-store'
 (defn add-question-to-store! [question store]
   (let [segment (TextSegment/from question)
         embedding (->> segment (. embedding-model embed) (.content))]

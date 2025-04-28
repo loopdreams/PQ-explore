@@ -1,4 +1,4 @@
-;; # 4. Answer Generation
+;; # Answer Generation
 (ns notebooks.generation
   (:require
    [clojure.string :as str]
@@ -65,7 +65,7 @@ then reply with \"I am unable to answer this question with the information I hav
 (comment
   (spit "data/generation_examples/example_1.txt"
         (-> {:question sample-question
-             :model-ref "llama3.2"}
+             :model-ref "gpt-3.5-turbo"}
             (add-context vdb/db-store-chunked-answers)
             add-pq-prompt
             add-llm-response
@@ -77,7 +77,7 @@ then reply with \"I am unable to answer this question with the information I hav
     kind/md)
 
 
-;; Let's try a few additional initial tests:
+;; Let's try a few additional tests:
 
 (def sample-question-broad "What is the government doing to support GPs?")
 (def sample-question-detail "What is the government doing to support GPs in Limerick city?")
@@ -85,7 +85,7 @@ then reply with \"I am unable to answer this question with the information I hav
 (comment
   (spit "data/generation_examples/example_2.txt"
         (-> {:question sample-question-broad
-             :model-ref "llama3.2"}
+             :model-ref "gpt-3.5-turbo"}
             (add-context vdb/db-store-chunked-answers)
             add-pq-prompt
             add-llm-response
@@ -93,7 +93,7 @@ then reply with \"I am unable to answer this question with the information I hav
 
   (spit "data/generation_examples/example_3.txt"
         (-> {:question sample-question-detail
-             :model-ref "llama3.2"}
+             :model-ref "gpt-3.5-turbo"}
             (add-context vdb/db-store-chunked-answers)
             add-pq-prompt
             add-llm-response
@@ -145,7 +145,7 @@ then reply with \"I am unable to answer this question with the information I hav
 (comment
   (spit "data/generation_examples/example_4.txt"
         (-> {:question sample-question
-             :model-ref "gemini-2.0-flash"}
+             :model-ref "gpt-3.5-turbo"}
             (generate-answer-with-references vdb/db-store-chunked-answers))))
 
 (-> "data/generation_examples/example_4.txt"
