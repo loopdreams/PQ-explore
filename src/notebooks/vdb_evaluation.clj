@@ -313,10 +313,17 @@
 ;; approaches to see the difference that the alternate retrieval strategy can
 ;; make.
 
+(defn gererate-context-question-retrieval [question]
+  (let [related-questions (->> (query-db-store question 5)
+                               (mapv :text))
+        past-answers (-> ds
+                         (tc/select-rows #(some #{(:question %)} related-questions))
+                         :answer)]
+    (mapv (fn [a] {:text a}) past-answers)))
 
 (defn generate-context [question db-store-name]
   (if (= db-store-name :question-retrieval)
-    (query-db-store question 5)
+    (gererate-context-question-retrieval question)
     (let [emb-question (.content (. embedding-model embed question))
           related-docs (. db-store-chunked-answers findRelevant emb-question 5)]
       (map (fn [doc]
@@ -347,11 +354,5 @@
 ;; previous approach. As you can see below It's much less focused!
 
 
-(->
- (generate-context "How much annual investment was provided under the 2019 GP agreement" :question-retrieval)
- (tc/dataset)
- (tc/map-columns :answer [:text] (fn [t] (-> ds
-                                             (tc/select-rows #(= t (:question %)))
-                                             :answer
-                                             first)))
- (kind/table))
+(kind/table
+ (generate-context "How much annual investment was provided under the 2019 GP agreement" :question-retrieval))
