@@ -40,3 +40,58 @@
 ;; embeddings. I also received huge support and guidance from the
 ;; [scicloj](https://scicloj.github.io/) community, which I am deeply grateful
 ;; for.
+
+;; ## Key Questions
+;;
+;; ### Could an LLM help optimize a common administrative task?
+;;
+;; Answering questions from members of the public about work your organisation
+;; does can often be a time-consuming administrative task. A certain amount of
+;; questions involve re-using or re-compiling material from previously-answered
+;; questions that are similar.
+;;
+;; LLMs are great at quickly summarising information, so the basic question here
+;; is wheather an LLM could potentially help optimize this daily task.
+;;
+;; Using the RAG approach helps us restrict the answers to only information that
+;; has already been previously provided.
+;;
+;; ### Can we do this with `clojure`?
+;;
+;; This might seem like an unimportant question (of course you can do it in
+;; clojure!). However, because the current ecosystem around LLM-based
+;; datascience is heavily weighted toward `python`, it is important to
+;; acknowledge here that a lot of the time for this project was spent on
+;; 'translating' some of these approaches that have been developed in python
+;; into clojure.
+;;
+;; ### How reliable is it?
+;;
+;;
+;;
+;; ## Notebooks Overview
+
+;; **1. Dataset Preparation**
+;; 
+;; Some basic cleaning/prepartion steps on the source dataset.
+;;
+;; **2. Vector Database**
+;; 
+;; Creating a vector database based on the 'questions' column of the dataset.
+;;
+;; **3. Retrieval Evaluation**
+;;
+;; Applying some evaluation metrics to our vector database. Trying out different
+;; retrieval strategies.
+;;
+;; **4. Answer Generation**
+;;
+;; Using the vector database to provide context to an LLM and testing answer generation.
+
+;; **5. Generation Evaluation**
+;;
+;; Examining what kinds of metrics we can use to evaluate the LLM-generated answers.
+;;
+;; **6. Single Model Evaluation**
+;;
+;; Putting together the whole process and evaluating some models/generation strategies.
