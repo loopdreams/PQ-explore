@@ -15,7 +15,9 @@
    [scicloj.tableplot.v1.plotly :as plotly]
    [selmer.parser :as templates]
    [tablecloth.api :as tc]
-   [scicloj.ml.tribuo]))
+   [scicloj.ml.tribuo]
+   [incanter.core :as incanter]
+   [incanter.optimize :refer [minimize]]))
 
 ;; ## Goal
 ;; In the previous section we looked at a broad range of models to try to get a
@@ -401,7 +403,7 @@
 (pivot-chart retrieval-recall-metrics-chart-spec)
 
 
-;; ### Retrieval-Generation
+;; ### Retrieval Impact on Generation
 
 ;; Let's have a quick look at the relationship between some of the retrieval
 ;; metrics and the generation metrics.
@@ -412,78 +414,84 @@
        {:=x retrieval-metric
         :=y generation-metric})
       (plotly/layer-point
-       {:=color :label})
-      (plotly/layer-smooth
-       {:=name "Predicted"})))
+       {:=color :label})))
 
-;; Let's compare the retrieval metrics to some of the generation metrics to see
-;; if there is any clear correlation.
+;; #### Retrieval vs Token Overlap
+;; The relationship between retrieval metrics and the token overlap between the
+;; generated answers and ground-truth answers.
 
-(scatter-plot-comparison ds-eval-results :retrieval-IoU :token-overlap-f1)
+(-> (scatter-plot-comparison ds-eval-results :retrieval-IoU :token-overlap-f1)
+    (plotly/layer-smooth
+     {:=name "Predicted"}))
 
-(scatter-plot-comparison ds-eval-results :retrieval-recall :token-overlap-recall)
+(-> (scatter-plot-comparison ds-eval-results :retrieval-recall :token-overlap-recall)
+    (plotly/layer-smooth
+     {:=name "Predicted"}))
 
-(scatter-plot-comparison ds-eval-results :retrieval-precision :token-overlap-precision)
+(-> (scatter-plot-comparison ds-eval-results :retrieval-precision :token-overlap-precision)
+    (plotly/layer-smooth
+     {:=name "Predicted"}))
+
+;; #### Retrieval vs Semantic Similarity
+;; A similar comparison with the semantic similarity metric (more of an exponential relationship)
 
 (scatter-plot-comparison ds-eval-results :retrieval-precision :cosine-similarity)
+(scatter-plot-comparison ds-eval-results :retrieval-IoU :cosine-similarity)
 
 
-
-(def regression-tree-options
-  {:model-type :scicloj.ml.tribuo/regression
-   :tribuo-components [{:name "cart"
-                        :type "org.tribuo.regression.rtree.CARTRegressionTrainer"
-                        :properties {:maxDepth "8"
-                                     :fractionFeaturesInSplit "1.0"
-                                     :seed "12345"
-                                     :impurity "mse"}}
-                       {:name "mse"
-                        :type "org.tribuo.regression.rtree.impurity.MeanSquaredError"}]
-   :tribuo-trainer-name "cart"})
+;; #### Retrieval vs the LLM-evaluated Metrics
 
 (-> ds-eval-results
-    (plotly/base {:=x :retrieval-IoU
-                  :=y :cosine-similarity})
-    (plotly/layer-point)
-    (plotly/layer-smooth {:=model-options regression-tree-options}))
+    (tc/drop-missing :metric-llm-faithfulness-score)
+    (tc/map-columns :faithfull? [ :metric-llm-faithfulness-score]
+                    (fn [score]
+                      (if (= score 1) "Faithfull" "Not Faithfull")))
+    (plotly/layer-boxplot
+     {:=y :retrieval-IoU
+      :=x :faithfull?}))
 
 (-> ds-eval-results
-    (plotly/base {:=x :retrieval-IoU
-                  :=y :cosine-similarity
-                  :=width 700})
-    (plotly/layer-point)
-    (plotly/layer-smooth {:=design-matrix [[:retrieval-IoU '(identity :retrieval-IoU)]
-                                           [:retrieval-IoU-2 '(* :retrieval-IoU
-                                                                 :retrieval-IoU)]]
-                          :=name "Retrieval Squared"}))
+    (tc/map-columns :correct? [ :metric-llm-correctness-score]
+                    (fn [score]
+                      (if (> score 3) "Correct" "Poor Correctness Score")))
+    (plotly/layer-boxplot
+     {:=y :retrieval-IoU
+      :=x :correct?}))
 
+(-> ds-eval-results
+    (tc/map-columns :relevant? [ :metric-llm-relevance-score]
+                    (fn [score]
+                      (if (> score 2) "Very Relevant" "Not So Relevant")))
+    (plotly/layer-boxplot
+     {:=y :retrieval-IoU
+      :=x :relevant?}))
 
 
 
 ;; ### Example Responses
 
-;; Best and worst answers by llm-metrics
+;; Best and worst answers by llm-metrics and semantic similarity
+
+(def results-sort-order [:metric-llm-faithfulness-score
+                         :metric-llm-correctness-score
+                         :metric-llm-relevance-score
+                         :cosine-similarity])
 (-> ds-eval-results
-    (tc/order-by [:metric-llm-faithfulness-score
-                  :metric-llm-correctness-score
-                  :metric-llm-relevance-score]
-                 :desc)
+    (tc/order-by results-sort-order :desc)
     (tc/select-columns [:question :answer :ground-truth :label])
     (tc/select-rows (range 5)))
 
 
 (-> ds-eval-results
     (tc/drop-missing :metric-llm-faithfulness-score)
-    (tc/order-by [:metric-llm-faithfulness-score
-                  :metric-llm-correctness-score
-                  :metric-llm-relevance-score])
+    (tc/order-by results-sort-order)
     (tc/select-columns [:question :answer :label :metric-llm-faithfulness-score
                         :metric-llm-correctness-score
                         :metric-llm-relevance-score])
     (tc/select-rows (range 3)))
 
 ;; Hmm, it seems like the 'worst performing' answers were actually honestly
-;; answered by the LLM. 
+;; answered by the LLM.
 ;;
 ;; On the one hand, we would definitely want to score these answers lower,
 ;; because it is indicating a problem in the RAG chain (at the retrieval leval).
@@ -496,9 +504,7 @@
 (-> ds-eval-results
     (tc/drop-missing :metric-llm-faithfulness-score)
     (tc/drop-rows #(re-find #"unable to|cannot find the specific|does not contain" (:answer %)))
-    (tc/order-by [:metric-llm-faithfulness-score
-                  :metric-llm-correctness-score
-                  :metric-llm-relevance-score])
+    (tc/order-by results-sort-order)
     (tc/select-columns [:question :answer :ground-truth :label])
     (tc/select-rows (range 3)))
 
@@ -540,5 +546,78 @@
 
 ;; ## Summary
 ;;
-;; Examples of things that weren't tested:
-;; - Best (performance/value) evaluation model?
+;; The main conclusion from this section is the importance of the **document
+;; retrieval** method used to provide context for the RAG.
+;;
+;; It seems like this can be improved in a few ways:
+;;
+;; - More data cleaning and preparation on the data before storing it in a
+;;   vector database. For example, doing more work to remove potentially
+;;   duplicate/redundant  information.
+;;
+;; - Experiment and test different strategies for breaking up the information
+;;   before storing it.
+;;
+;; The best approach here would also depend heavily on the end-use case. For
+;; example, if you only wanted to retrieve specific pieces of information (as in
+;; the evaluation dataset used in this section), then smaller, more precise
+;; chunks of information seem to work better. However, if you wanted to answer
+;; very broad questions about policy or strategy, then maybe you would want
+;; larger chunks of information stored.
+;;
+;; From what I could see, the model is very capable of finding the relevant
+;; information from the context, once the context is properly provided.
+;;
+;; Overall, some other key takeaways were:
+;;
+;; - Developing a RAG system means tinkering with multiple different
+;;   parts/modules within a pipeline. Clojure's emphasis on immutable,
+;;   composable functions seems to make this kind of work very easy and
+;;   intuitive.
+;;
+;; - However, it seems like there is potentially a gap in the clojure ecosystem
+;;   in terms of Natural Language Processing techniques/libraries. Or, at least
+;;   in the short time to develop this project before the conference, I ended up
+;;   relying on work in python for some of the token-based/semantic metrics. I
+;;   also had to rely on java for the vector database (although I found this
+;;   process relatively straight-forward). I would say that I spent around half
+;;   the time for this project figuring out how to 'reproduce' python material
+;;   in clojure, and half thinking about the actual questions related to the
+;;   data. Which, in my case (a hobbyist programmer) was totally fine - I
+;;   learned a lot by doing it!  However, if there was some kind of project
+;;   deadline this kind of consideration might tip the balance if favour of just
+;;   using python, where there already seems to be so much work put into RAG
+;;   evaluation libraries.
+;;
+;; - I should have spent more time at the outset curating and cleaning the
+;;   initial dataset. I would love, for example, to have seen how the models
+;;   performed when there was information that was potentially out of date. In
+;;   my case, the 'window' for data was very short (2 months), which would not
+;;   make sense in an actual application of this type.
+;;
+;; ## Next Steps
+;;
+;; Finally, here are a couple of ideas that occurred to me throughout the work,
+;; but which I didn't get time to explore:
+;;
+;; - As we saw above, the LLM-generated metrics seem to be much better at
+;;   spotting errors than the other metric types. The creators of the
+;;   [continuous-eval
+;;   repository](https://github.com/relari-ai/continuous-eval/tree/main) have a
+;;   very interesting article on [generation
+;;   evaluation.](https://blog.relari.ai/a-practical-guide-to-rag-evaluation-part-2-generation-c79b1bde0f5d)
+;;   In it they discuss evaluation in a more 'practical' context, where, for
+;;   example, the time and cost of evaluating a pipeline using another LLM would
+;;   become a significant factor. So, they construct a 'hybrid' pipline that (a)
+;;   uses a combination of the deterministic/semantic metrics to do a first pass
+;;   on the data, and then (b) filter out datapoints where the metric cannot
+;;   decide with confidence if the answer is acceptable. For these 'low
+;;   confidence' evaluations, you would then pass them to a LLM-evaluator model
+;;   to clarify. In their test they only had to use the LLM reviews on 7% of
+;;   answer, saving 15x on costs.
+;;
+;; - It would be interesting to apply similar evaluation frameworks to the
+;;   original, human-generated answers in the dataset. This would be with the
+;;   aim of helping policymakers identify strengths and weaknesses in how
+;;   information is provided in this important public setting.
+;;
