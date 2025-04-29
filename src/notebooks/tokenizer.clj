@@ -1,14 +1,8 @@
 (ns notebooks.tokenizer
   (:require [clojure.set :as set]
             [libpython-clj2.require :refer [require-python]]
-            [libpython-clj2.python :refer [py. py.. py.-] :as py]
-            [clojure.string :as str])
-  (:import (dev.langchain4j.data.embedding Embedding)
-   (dev.langchain4j.data.segment TextSegment)
-   (dev.langchain4j.model.embedding EmbeddingModel)
-   (dev.langchain4j.store.embedding EmbeddingMatch)
-   (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
-   (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
+            [libpython-clj2.python :refer [py. py.-] :as py]
+            [clojure.string :as str]))
 
 (require-python '[nltk.tokenize.destructive :refer [MacIntyreContractions]]
                 '[re :refer [compile]])
