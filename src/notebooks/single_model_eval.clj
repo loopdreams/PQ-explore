@@ -14,10 +14,7 @@
    [scicloj.kindly.v4.kind :as kind]
    [scicloj.tableplot.v1.plotly :as plotly]
    [selmer.parser :as templates]
-   [tablecloth.api :as tc]
-   [scicloj.ml.tribuo]
-   [incanter.core :as incanter]
-   [incanter.optimize :refer [minimize]]))
+   [tablecloth.api :as tc]))
 
 ;; ## Goal
 ;; In the previous section we looked at a broad range of models to try to get a
