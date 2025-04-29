@@ -7,14 +7,13 @@
          dev.langchain4j/langchain4j {:mvn/version "1.0.0-beta2"}
          dev.langchain4j/langchain4j-embeddings-all-minilm-l6-v2 {:mvn/version "1.0.0-beta2"}
 
-         ;; Templating
-         selmer/selmer {:mvn/version "1.12.62"}
+         ;; libpython-clj
+         clj-python/libpython-clj {:mvn/version "2.026"}
 
+         selmer/selmer {:mvn/version "1.12.62"}
          com.github.haifengl/smile-core {:mvn/version "4.0.0"}
          clj-http/clj-http {:mvn/version "3.13.0"}
          metosin/jsonista {:mvn/version "0.3.13"}
-         org.scicloj/sklearn-clj {:mvn/version "0.5"}
-         clj-python/libpython-clj {:mvn/version "2.026"}
          clojure.java-time/clojure.java-time {:mvn/version "1.4.3"}
          net.clojars.wkok/openai-clojure {:mvn/version "0.22.0"}}
  :aliases
