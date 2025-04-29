@@ -12,7 +12,6 @@
             [jsonista.core :as json])
   (:import
    (dev.langchain4j.data.segment TextSegment)
-   (dev.langchain4j.model.openai OpenAiEmbeddingModel)
    (dev.langchain4j.store.embedding.inmemory InMemoryEmbeddingStore)
    (dev.langchain4j.model.embedding.onnx.allminilml6v2 AllMiniLmL6V2EmbeddingModel)))
 
