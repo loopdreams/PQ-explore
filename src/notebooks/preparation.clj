@@ -1,4 +1,4 @@
-;; # 1. Dataset Preparation
+;; # Dataset Preparation
 (ns notebooks.preparation
   (:require [tablecloth.api :as tc]
             [java-time.api :as jt]
@@ -128,7 +128,7 @@
       (tc/drop-missing :answer)
       (tc/map-columns :answer [:answer] (comp clean-incomplete-answers clean-nbs-answers))
       (tc/unique-by :question)
-      (tc/select-columns [:date :question :answer :member :department :topic :url])))
+      (tc/select-columns [:date :question :answer :department :topic :url])))
 
 ;; ## General Stats
 
@@ -169,7 +169,7 @@
     [:strong (jt/format "MMMM dd yyyy" ds-date-end)]]
    [:li [:strong (format "%,d" total-questions)] " total questions asked by " [:strong number-deputies] " members of parliament"]
    [:li "The five most common question topics are: " (str/join ", " top-5-topics)]
-   [:li "The five most commonnly asked departments are: " (str/join ", " top-5-most-asked-departments)]]])
+   [:li "The five most commonly asked departments are: " (str/join ", " top-5-most-asked-departments)]]])
 
 
 ;; ## A quick look at the dataset
