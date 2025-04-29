@@ -83,3 +83,12 @@ Run the following command, which will create the notebook in a `book` directory 
 clj -X:make-book
 ```
 
+## Running LLM Functions 
+The LLM functions in the notebook, which are commented out, depend on the a file in the root directory, `secrets.edn`. If you want to run these functions, you'll have to create that file with the following fields:
+
+``` clojure
+{:openai-api-key "insert your key here"
+ :gemini-api-key "insert your key here"
+ :anthropic-api-key "insert your key here"}
+```
+
