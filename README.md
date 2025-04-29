@@ -23,3 +23,63 @@ The existing questions/answers that are available contain additional metadata th
 - Which department/minister answered the question
 
 
+
+## Build/Render the Notebook
+### Install Python Dependencies
+
+This notebooks depends on a few python functions. Full instructions for using python with clojure are available [at the libpython-clj respository.](https://github.com/clj-python/libpython-clj)
+
+Below, I'll go over the steps that I took (I use MacOS and Emacs)
+
+1. (Optional) Set up a python virtual environment 
+
+In my case, I used [pyenv](https://github.com/pyenv/pyenv). 
+
+``` sh
+brew install pyenv pyenv-virtualenv
+```
+
+Then, create a virtual environment (I used python 3.12.1).
+
+``` sh
+pyenv virtualenv 3.12.1 venv-name
+```
+
+Activate it with:
+
+``` sh
+pyenv activate venv-name
+```
+
+2. Install Dependencies 
+
+This project depends on:
+- [nltk](https://www.nltk.org/)
+- [continuous-eval](https://github.com/relari-ai/continuous-eval/tree/main?tab=readme-ov-file)
+
+``` sh
+python3 -m pip install continuous-eval nltk
+```
+
+3. Load these in clojure using libpython-clj 
+
+In my case I did this by adding the following to a `dev/user.clj` file. Replace the path references to path to the relevant python binary and library folder (where you installed the dependencies above)
+
+``` clojure
+(ns user
+  (:require [libpython-clj2.python :as py]))
+
+
+
+(py/initialize! :python-executable (str (System/getenv "HOME") "/.pyenv/versions/3.12.1/envs/VENV-NAME/bin/python3.12")
+                :library-path (str (System/getenv "HOME") "/.pyenv/versions/3.12.1/lib/python3.12/site-packages/"))
+```
+
+### Build the notebook 
+
+Run the following command, which will create the notebook in a `book` directory and start a server with clay.
+
+``` clojure
+clj -X:make-book
+```
+
