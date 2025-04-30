@@ -2,7 +2,7 @@
 (ns notebooks.vdb-evaluation
   (:require [clojure.edn :as edn]
             [notebooks.preparation :refer [ds]]
-            [notebooks.vector-database :refer [add-question-to-store! db-store-questions query-db-store]]
+            [notebooks.vector-database :refer [add-doc-to-store db-store-questions query-db-store]]
             [scicloj.kindly.v4.kind :as kind]
             [notebooks.tokenizer :as tokenizer]
             [scicloj.tableplot.v1.plotly :as plotly]
@@ -172,7 +172,7 @@
 
 (defn calculate-metrics [questions answers chunked-docs & label]
   (let [db-store (InMemoryEmbeddingStore/new)
-        num      (count (mapv #(add-question-to-store! % db-store) chunked-docs))
+        num      (count (mapv #(add-doc-to-store % db-store) chunked-docs))
         _        (println num)]
     (loop [idx     (dec (count questions))
            results []]
@@ -298,7 +298,7 @@
         docs (-> (chunked-docs answers 3)
                  distinct) ;; before filtering for duplicates there were around 24K chunks, after filtering around 18K
         db-store (InMemoryEmbeddingStore/new)
-        _c (count (mapv #(add-question-to-store! % db-store) docs))]
+        _c (count (mapv #(add-doc-to-store % db-store) docs))]
     (println _c)
     (spit "data/retrieval_store/db-store-docs.json" (.serializeToJson db-store))))
 

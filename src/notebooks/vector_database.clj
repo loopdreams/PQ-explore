@@ -58,8 +58,7 @@
 
 ;; We will first define a short function for adding a question to a memory store:
 
-;; TODO: Rename this fn to just 'add-doc-to-store'
-(defn add-question-to-store! [question store]
+(defn add-doc-to-store [question store]
   (let [segment (TextSegment/from question)
         embedding (->> segment (. embedding-model embed) (.content))]
     (. store add embedding segment)))
@@ -305,7 +304,7 @@
 
 (def questions-subset-store (InMemoryEmbeddingStore/new))
 
-(count (map #(add-question-to-store! % questions-subset-store) (:question ds-subset)))
+(count (map #(add-doc-to-store % questions-subset-store) (:question ds-subset)))
 
 ;; This function, similar to ones above, returns the 5 closest matching
 ;; questions. These will be what we try to visualise.
