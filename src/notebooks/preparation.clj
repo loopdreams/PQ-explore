@@ -136,9 +136,6 @@
 (def total-questions (tc/row-count ds))
 
 ^:kindly/hide-code
-(def number-deputies (-> ds :member distinct count))
-
-^:kindly/hide-code
 (def ds-date-start (-> ds (tc/order-by :date) :date first))
 
 ^:kindly/hide-code
@@ -167,7 +164,7 @@
    [:li "Dates range from "
     [:strong (jt/format "MMMM dd yyyy" ds-date-start)] " to "
     [:strong (jt/format "MMMM dd yyyy" ds-date-end)]]
-   [:li [:strong (format "%,d" total-questions)] " total questions asked by " [:strong number-deputies] " members of parliament"]
+   [:li [:strong (format "%,d" total-questions)] " total questions asked."]
    [:li "The five most common question topics are: " (str/join ", " top-5-topics)]
    [:li "The five most commonly asked departments are: " (str/join ", " top-5-most-asked-departments)]]])
 
