@@ -9,9 +9,8 @@
    [notebooks.llm-api :as llm]
    [notebooks.preparation :refer [ds]]
    [notebooks.rag-evaluation
-    :refer [add-all-generation-evaluation-metrics average-coll build-responses-eval-ds-avgs]]
+    :refer [add-all-generation-evaluation-metrics average-coll]]
    [notebooks.tokenizer :as tokenizer]
-   [scicloj.kindly.v4.kind :as kind]
    [scicloj.tableplot.v1.plotly :as plotly]
    [selmer.parser :as templates]
    [tablecloth.api :as tc]))
