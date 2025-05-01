@@ -9,7 +9,7 @@
 ;;
 ;; Ministers must provide answers promptly, and these questions and answers
 ;; are subsequently part of the public record. To see examples of these questions
-;; and answers, see the [Oireachtais website](https://www.oireachtas.ie/en/debates/questions/).
+;; and answers, see the [Oireachtas website](https://www.oireachtas.ie/en/debates/questions/).
 ;;
 ;; The goal of this project was to explore these questions and answers using
 ;; some standard Retrieval Augmented Generation (RAG) techniques.
