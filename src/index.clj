@@ -23,16 +23,9 @@
 ;; various rudimentary **validation** techniques to try to see how the models
 ;; perform with this kind of task. 
 
-;; The target audience for these kinds of explorations are policymakers (like
-;; myself), who are new to RAG/LLMs and want to understand a little more about
-;; the details of what goes into this kind of setup.
-;;
 ;; This is mainly intended as an exploratory overview. I used a
 ;; relatively small range of the potential data (around 10,000 questions
-;; spanning less than three months at the beginning of 2024) and I was limited
-;; in terms of how much I could explore LLM performance, due to computing
-;; constraints (in the case of locally running models) and cost restraints (in
-;; the case of cloud-based models).
+;; spanning less than three months at the beginning of 2024). 
 ;;
 ;; I primarily used the tools provided by the
 ;; [noj](https://scicloj.github.io/noj/) library, as well as the
@@ -67,13 +60,24 @@
 ;;
 ;; ### How reliable is it?
 ;;
+;; RAG-based applications are relatively straight-forward to set up. However, the
+;; main questions usually center on how accurate and reliable the answers are.
+;; This is especially true when it comes to public policy.
+;;
+;; There are already lots of approaches for testing this kind of setup,
+;; including frameworks like [RAGAS.](https://docs.ragas.io/en/stable/) Here, I
+;; try out a few evaluation techniques.
+;;
+;; The analysis here is certainly not exhaustive. Hopefully it can help point in
+;; the direction of more complete evaluation strategies using clojure tools.
+;;
 ;;
 ;;
 ;; ## Notebooks Overview
 
 ;; **1. Dataset Preparation**
 ;; 
-;; Some basic cleaning/prepartion steps on the source dataset.
+;; Some basic cleaning/preparation steps on the source dataset.
 ;;
 ;; **2. Vector Database**
 ;; 
