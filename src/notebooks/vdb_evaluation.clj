@@ -84,7 +84,7 @@
 ;; unhelpful information (like the first answer).
 ;;
 ;; Also, depending on how specific our question is, this is potentially
-;; way to much information, and could potentially confuse or mislead the LLM
+;; too much information, and could potentially confuse or mislead the LLM
 ;; later on.
 ;;
 ;; To help improve this, let's first take a look at some common, simple metrics
