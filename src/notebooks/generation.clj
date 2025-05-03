@@ -9,7 +9,7 @@
    [tablecloth.api :as tc]))
 
 
-;; To generate an answering using a RAG approach, all we have to do is add our
+;; To generate an answer using a RAG approach, all we have to do is add our
 ;; retrieved context to a prompt.
 ;;
 ;; To start with, we will re-use the same question as we used in the previous
