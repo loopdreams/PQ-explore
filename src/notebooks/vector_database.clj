@@ -35,9 +35,11 @@
 
 (def embedding-model (AllMiniLmL6V2EmbeddingModel/new))
 
-(def sample-question-embedding
-  (->> (TextSegment/from (first questions-list))
+(defn text->embedding [text]
+  (->> (TextSegment/from text)
        (. embedding-model embed)))
+
+(def sample-question-embedding (text->embedding (first questions-list)))
 
 
 (kind/pprint (-> sample-question-embedding
@@ -297,6 +299,17 @@
   (-> ds
       (tc/select-rows (range 1000))))
 
+;; We'll also add the qestion embeddings to this subset.
+
+(defonce ds-subset-with-embeddings
+  (-> ds-subset
+      (tc/map-columns :embedding [:question]
+                      (fn [q]
+                        (->> (text->embedding q)
+                             (.content)
+                             (.vector)
+                             vec)))))
+
 
 (def sample-question "The Deputy asks the Minister a question about the number of vacant houses")
 
@@ -309,93 +322,176 @@
 ;; This function, similar to ones above, returns the 5 closest matching
 ;; questions. These will be what we try to visualise.
 
-(def matching-questions
-  (let [query (.content (. embedding-model embed sample-question))
-        matches (. questions-subset-store findRelevant query 5)]
-    (map (fn [entry] {:question (.text (.embedded entry))
-                      :similarity (.score entry)})
+(defn get-matching-questions [question n]
+  (let [query (.content (. embedding-model embed question))
+        matches (. questions-subset-store findRelevant query n)]
+    (map (fn [entry]
+           {:question (.text (.embedded entry))
+            :similarity (.score entry)})
          matches)))
+
+(def q-matches (get-matching-questions sample-question 5))
 
 ;; Next, we will add custom labels to the data. We will also add our sample
 ;; question into the dataset and label it accordingly. The labels will be:
 ;;
-;; - 'default' - the quesitons that haven't been matched
-;; - 'match' - one of the 5 matching questions
-;; - 'question' - the question itself
-
-(def ds-subset-labelled
-  (->> (tc/rows ds-subset :as-maps)
-       (map (fn [entry]
-              (let [match (filterv (fn [{:keys [question]}]
-                                     (= question (:question entry)))
-                                   matching-questions)]
-                (if (seq match)
-                  (-> entry
-                      (assoc :label "match")
-                      (assoc :similarity (:similarity (first match))))
-                  (-> entry
-                      (assoc :label "default")
-                      (assoc :similarity 0))))))
-       (into [{:question sample-question
-               :label "question"
-               :similarity 1}])
-       (tc/dataset)))
-
-
-;; Finally, we will add the embeddings to the questions.
-
-(def ds-subset-labelled-embeddings
-  (tc/map-columns ds-subset-labelled
-                  :embedding [:question]
-                  (fn [q]
-                    (->> (TextSegment/from q)
-                         (. embedding-model embed)
-                         (.content)
-                         (.vector)
-                         vec))))
-
-
-(def q-test-ds
-  (-> (make-t-sne-coords ds-subset-labelled-embeddings {:perplexity 10})
-      (tc/dataset)
-      (tc/rename-columns [:x :y])
-      (tc/add-column :label (:label ds-subset-labelled))
-      (tc/add-column :question (:question ds-subset-labelled))
-      (tc/add-column :similarity (:similarity ds-subset-labelled))))
+;; - 'Default' - the quesitons that haven't been matched
+;; - 'Match' - one of the 5 matching questions
+;; - 'Question' - the question itself
 
 ;; #### 2D Projection
- 
-(kind/echarts
- {:tooltip {}
-  :xAxis {}
-  :yAxis {}
-  :series [{:data (-> q-test-ds
-                      (tc/select-rows #(= (% :label) "question"))
-                      (tc/select-columns [:x :y])
-                      (tc/rows :as-vectors))
-            :name "Question"
-            :symbolSize 20
-            :type "scatter"}
-           {:data (-> q-test-ds
-                      (tc/select-rows #(= (% :label) "match"))
-                      (tc/select-columns [:x :y])
-                      (tc/rows :as-vectors))
-            :name "Match"
-            :type "scatter"
-            :symbolSize 15}
-           {:data (-> q-test-ds
-                      (tc/select-rows #(= (% :label) "default"))
-                      (tc/select-columns [:x :y])
-                      (tc/rows :as-vectors))
-            :itemStyle {:opacity 0.3}
-            :name "Default"
-            :type "scatter"}]})
+
+(defn add-label [ds-question matching-qs]
+  (if (some #{ds-question} (mapv :question matching-qs))
+    "Match"
+    "Default"))
+
+(defn question-retrieval-visulation-data [question]
+  (let [matches     (get-matching-questions question 5)
+        q-embedding (-> (text->embedding question)
+                        (.content)
+                        (.vector)
+                        vec)
+        ds-labelled (-> ds-subset-with-embeddings
+                        (tc/map-columns :label [:question] #(add-label % matches))
+                        (tc/select-columns [:question :label :topic :embedding]))]
+    (-> ds-labelled
+        (tc/rows :as-maps)
+        (into [{:question  question
+                :label     "Question"
+                :embedding q-embedding}])
+        (tc/dataset))))
+
+(defn vis-question-retrieval [question opts]
+  (let [labels (question-retrieval-visulation-data question)
+        data (-> (make-t-sne-coords labels opts)
+                 (tc/dataset)
+                 (tc/add-column :label (:label labels))
+                 (tc/add-column :question (:question labels))
+                 (tc/add-column :topic (:topic labels)))
+        filter-label (fn [ds label]
+                       (-> ds
+                           (tc/select-rows #(= (% :label) label))
+                           (tc/select-columns [:x :y])
+                           (tc/rows :as-vectors)))]
+    (kind/echarts
+     {:xAxis {}
+      :yAxis {}
+      :series [{:data (filter-label data "Default")
+                :name "Default"
+                :type "scatter"
+                :itemStyle {:color "#d3d3d3"}}
+               {:data (filter-label data "Question")
+                :name "Question"
+                :symbolSize 20
+                :type "scatter"}
+               {:data (filter-label data "Match")
+                :name "Match"
+                :symbolSize 15
+                :type "scatter"}]})))
+
+(vis-question-retrieval sample-question {:perplexity 10})
+
+(comment
+  (vis-question-retrieval "A question asked about housing"
+                          {:perplexity 25
+                           :iterations 2000}))
+
 
 
 ;; #### 3D Projection
 
-(plot-t-sne-coords ds-subset-labelled-embeddings
-                   (:label ds-subset-labelled-embeddings)
-                   {:perplexity 10 :dimensions 3}
-                   {:=color :label :=coordinates :3d
-                    :=mark-opacity 0.5})
+(let [ds (question-retrieval-visulation-data sample-question)]
+  (plot-t-sne-coords ds
+                     (:label ds)
+                     {:perplexity 10 :dimensions 3}
+                     {:=color :label :=coordinates :3d
+                      :=mark-opacity 0.5}))
+
+
+
+
+;; #### Visualising all similarities
+
+;; All matches ranked
+
+(defn add-similarity-ranking-labels [question]
+  (let [q-embedding (->> (text->embedding question) (.content))
+        matches     (. questions-subset-store findRelevant q-embedding 1000)
+        matches-ds  (-> (concat
+                         [{:question   question
+                           :similarity 1}]
+                         (map (fn [entry]
+                                {:question   (.text (.embedded entry))
+                                 :similarity (.score entry)})
+                              matches))
+                        (tc/dataset)
+                        (tc/add-column :idx (range)))
+        lookup-idx  (fn [question]
+                      (-> matches-ds (tc/select-rows #(= (:question %) question))
+                          :idx first))]
+    (-> (concat [{:question  question
+                  :topic     "User"
+                  :embedding (-> q-embedding (.vector) vec)}]
+                (tc/rows ds-subset-with-embeddings :as-maps))
+        (tc/dataset)
+        (tc/map-columns :ranking [:question] lookup-idx)
+        (tc/map-columns :ranking-label [:ranking]
+                        (fn [r]
+                          (if (= r 0) "Question"
+                              (condp > r
+                                11  "1-10"
+                                101 "11-100"
+                                501 "101-500"
+                                "501+")))))))
+
+
+(defn vis-similarity-rankings [question opts]
+  (let [rankings-ds  (add-similarity-ranking-labels question)
+        data         (-> (make-t-sne-coords rankings-ds opts)
+                         (tc/dataset)
+                         (tc/add-column :label (:ranking-label rankings-ds)))
+        filter-label (fn [ds label]
+                       (-> ds
+                           (tc/select-rows #(= (% :label) label))
+                           (tc/select-columns [:x :y])
+                           (tc/rows :as-vectors)))]
+    (kind/echarts
+     {:tooltip {}
+      :xAxis   {}
+      :yAxis   {}
+      :series  [{:data      (filter-label data "501+")
+                 :name      "501+"
+                 :type      "scatter"
+                 :itemStyle {:color "#C5E8B7"}}
+                {:data      (filter-label data "101-500")
+                 :name      "101-500"
+                 :type      "scatter"
+                 :itemStyle {:color "#83D475"}}
+                {:data      (filter-label data "11-100")
+                 :name      "11-100"
+                 :itemStyle {:color "#2EB62C"}
+                 :type      "scatter"}
+                {:data       (filter-label data "1-10")
+                 :name       "11-100"
+                 :symbolSize 15
+                 :type       "scatter"}
+                {:data       (filter-label data "Question")
+                 :name       "Question"
+                 :itemStyle  {:color "#DA0017"}
+                 :symbolSize 15
+                 :type       "scatter"}]})))
+
+(vis-similarity-rankings "What is the government doing to improve local housing?"
+                         {:perplexity 50})
+
+;; 3d
+
+(defn vis-similarity-rankings-3d [question opts]
+  (let [rankings-ds (add-similarity-ranking-labels question)]
+    (plot-t-sne-coords
+     rankings-ds (:ranking-label rankings-ds)
+     {:perplexity 10 :dimensions 3}
+     {:=color :label :=coordinates :3d})))
+
+(vis-similarity-rankings-3d "Climate change" {})
