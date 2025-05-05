@@ -165,7 +165,7 @@
 ;; the Earth's surface is translated into a 2d map. The importance of this
 ;; analogy lies in the caveats that accopany these 2d representations of the
 ;; earth. Different projections can convey different significations, a point
-;; that his highlighted in a scene from the West Wing where the "Cartophraphers
+;; that his highlighted in a scene from the West Wing where the "Cartographers
 ;; for social equality" give a presentation to the staff on the socio-political
 ;; implications of different projection techniques.
 ;; - https://www.youtube.com/watch?v=AMfXVWFBrVo
@@ -393,9 +393,12 @@
 (vis-question-retrieval sample-question {:perplexity 10})
 
 (comment
+
+
   (vis-question-retrieval "A question asked about housing"
-                          {:perplexity 25
-                           :iterations 2000}))
+                          {:perplexity 10
+                           :iterations 1000}))
+
 
 
 
@@ -484,6 +487,10 @@
 
 (vis-similarity-rankings "What is the government doing to improve local housing?"
                          {:perplexity 50})
+(vis-similarity-rankings "What is the government doing to address climate change?"
+                         {:iterations 500})
+
+
 
 ;; 3d
 
