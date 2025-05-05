@@ -126,7 +126,7 @@
 
 ;; Our second variable to explore is the prompt.
 
-;; Our initial promot was as follows:
+;; Our initial prompt was as follows:
 ;;
 ;;> I want you to act as a responsible and trustworthy senior government
 ;;> official. Please provide an answer to a citizen's question, using only the
