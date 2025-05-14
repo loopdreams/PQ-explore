@@ -2,6 +2,8 @@
 
 !Work-in-progress
 
+Moved here -> https://github.com/loopdreams/pq-rag-eval
+
 ## Goal 
 
 As part of the Irish parliamentary system, members of parliament are able to submit written or spoken questions to Ministers and their corresponding departments. These questions and answers are part of the public record. 
